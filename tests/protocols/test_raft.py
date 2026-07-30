@@ -17,6 +17,15 @@ def elected_group(*, seed: int = 7) -> RaftGroup:
     return group
 
 
+def test_election_timeout_rejects_round_trip_network_delay_budget() -> None:
+    with pytest.raises(ValueError, match="network delay"):
+        RaftGroup(
+            election_timeout_range=(4, 7),
+            heartbeat_interval=1,
+            network_delay=8,
+        )
+
+
 def test_seeded_timeouts_elect_exactly_one_leader() -> None:
     group = elected_group(seed=11)
 

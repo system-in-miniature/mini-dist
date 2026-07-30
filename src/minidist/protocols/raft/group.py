@@ -122,6 +122,12 @@ class RaftGroup:
             )
         if heartbeat_interval <= 0 or network_delay <= 0:
             raise ValueError("heartbeat interval and network delay must be positive")
+        minimum_timeout = 2 * network_delay + heartbeat_interval
+        if low <= minimum_timeout:
+            raise ValueError(
+                "lowest election timeout must exceed twice the maximum network "
+                "delay plus the heartbeat interval"
+            )
 
         self.clock = SimClock()
         self.trace = Trace()

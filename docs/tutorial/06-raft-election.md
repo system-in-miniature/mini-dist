@@ -74,9 +74,11 @@ sequence, the timeout draws and resulting trace are repeatable.
 Randomization does not prove election safety. Its job is liveness: different
 deadlines make it likely that one candidate asks for votes before the others.
 Safety comes from quorum intersection and voting rules. MiniDist also validates
-that the lowest election timeout exceeds the heartbeat interval, preventing a
-correctly connected follower from timing out before regular heartbeats under
-the simulator's configured assumptions.
+that the lowest election timeout is strictly greater than twice the maximum
+configured network delay plus the heartbeat interval. The two delay legs
+budget a heartbeat round trip; the additional interval lets the next regular
+heartbeat start before a correctly connected follower times out. Configurations
+that omit this network-delay budget do not receive a liveness claim.
 
 A simulation tick is only an ordering unit. “The timeout is 5 ticks” does not
 mean five milliseconds, and this model provides no latency benchmark.

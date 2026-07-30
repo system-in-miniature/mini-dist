@@ -64,8 +64,9 @@ node.election_deadline = self.clock.now + timeout
 
 随机化并不能证明选举安全；它解决的是活性问题：不同 deadline 让某个候选者更
 可能先于其他节点请求投票。安全来自法定人数交集与投票规则。MiniDist 还要求
-最小 election timeout 大于 heartbeat interval，避免在仿真配置假设下，连接
-正常的 follower 比常规心跳更早超时。
+最小 election timeout 严格大于两倍最大配置网络延迟再加 heartbeat interval。
+两段延迟为一次心跳往返留出预算，额外的 interval 让下一次常规心跳能在连接正常
+的 follower 超时前启动。未计入该网络延迟预算的配置不具备这里所述的活性保证。
 
 仿真 tick 只是排序单位。“超时为 5 tick”不代表五毫秒，本模型也不提供延迟
 基准。

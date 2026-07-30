@@ -35,7 +35,8 @@
 
 - `NONE`：不请求等待复制；
 - `LEADER`：请求当前 leader/primary 边界；
-- `QUORUM`：请求多数派复制边界；
+- `QUORUM`：由实现定义——Raft 等待多数派，WAL shipping 等待全部已配置的同步
+  standby；
 - `ALL_ISR`：请求同步副本集合中的全部成员。
 
 名字本身不够。对于异步协议，`AsyncPrimaryGroup.client_write` 接受 `NONE` 与 `LEADER`。两条路径都会在 primary 内存字典中应用 KV、递增流 offset、入队消息并返回，不等待 replica。源码注释精确说明：此处 `LEADER` 是“已由该 primary 应用”，不是共识或耐久性。

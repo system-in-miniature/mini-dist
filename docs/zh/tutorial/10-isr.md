@@ -68,10 +68,10 @@ MiniDist 用 `set_replica_slow(node, True)` 建模慢 follower。
 `replica_lag_timeout` 个逻辑 tick，就移出 ISR，并记录
 `isr_member_removed`。
 
-移出后，剩余 ISR 可能推进 HW，但这不是无限收缩许可。
-`min.insync.replicas` 是 `ALL_ISR` 写的下限。三节点、minimum=2 时，一个
-lagging follower 可以离开且写继续；两个 follower 都离开时，虽然 leader
-仍在 ISR，下一次 `ALL_ISR` 写会被拒绝。
+移出后，剩余 ISR 可能推进 HW。`min.insync.replicas` 不会阻止 ISR 缩小，
+即使集合小于配置值也一样；它只控制 `ALL_ISR` 写的准入。三节点、minimum=2
+时，一个 lagging follower 可以离开且写继续；两个 follower 都离开时，虽然
+leader 仍在 ISR，下一次 `ALL_ISR` 写会被拒绝。
 
 所以必须分开三个步骤：
 
@@ -288,8 +288,9 @@ image，不是生产 Kafka page cache 与 flush 配置。
 ## 小结
 
 ISR replication 把 membership 变成写边界的一部分。Lagging replica 可以离开，
-但 `min.insync.replicas` 限制集合能缩到多小；HW 是剩余 ISR 的最小 log end，
-只有该前缀 committed。追平 replica 可以重入，而 controller election 截断到
-HW，并递增用于 fence 旧 packet 的 leader epoch。最终比较不是一条由弱到强的
-阶梯：配置式 WAL standby、动态 ISR、固定 Raft 多数派与异步 sink 回答的是不同
-运维问题。共享 enum 名称看似能抹平差异时，请回到第 8 章七实验矩阵。
+即使 ISR 低于 `min.insync.replicas`；该设置拒绝后续 `ALL_ISR` 写，而不是阻止
+ISR 收缩。HW 是剩余 ISR 的最小 log end，只有该前缀 committed。追平 replica
+可以重入，而 controller election 截断到 HW，并递增用于 fence 旧 packet 的
+leader epoch。最终比较不是一条由弱到强的阶梯：配置式 WAL standby、动态 ISR、
+固定 Raft 多数派与异步 sink 回答的是不同运维问题。共享 enum 名称看似能抹平
+差异时，请回到第 8 章七实验矩阵。

@@ -55,7 +55,8 @@ an inheritance hierarchy.
 
 - `NONE`: do not request a replication wait;
 - `LEADER`: ask for the current leader/primary boundary;
-- `QUORUM`: ask for a majority replication boundary;
+- `QUORUM`: implementation-defined—Raft waits for a majority, while WAL
+  shipping waits for all configured synchronous standbys;
 - `ALL_ISR`: ask for all members of an in-sync replica set.
 
 The names alone are insufficient. For the async protocol,

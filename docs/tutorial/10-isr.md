@@ -80,11 +80,11 @@ that node. Every tick calls `_refresh_isr_and_hw()`. If a follower remains
 behind for `replica_lag_timeout` logical ticks, it is removed and
 `isr_member_removed` is recorded.
 
-Removal can let the remaining ISR advance HW, but it is not permission to
-shrink without limit. `min.insync.replicas` is the floor for `ALL_ISR` writes.
-With three nodes and a minimum of two, one lagging follower can leave and
-writes continue. If both followers leave, the leader remains in the ISR but
-the next `ALL_ISR` write is rejected.
+Removal can let the remaining ISR advance HW. `min.insync.replicas` does not
+prevent that set from shrinking, even below the configured value; it controls
+admission of `ALL_ISR` writes only. With three nodes and a minimum of two, one
+lagging follower can leave and writes continue. If both followers leave, the
+leader remains in the ISR but the next `ALL_ISR` write is rejected.
 
 The mechanism therefore has three steps that are easy to collapse incorrectly:
 
@@ -320,9 +320,10 @@ name,” and dynamic `ALL_ISR` may cover fewer nodes than a fixed majority.
 ## Summary
 
 ISR replication makes membership part of the write boundary. A lagging replica
-can leave, but `min.insync.replicas` limits how far the set may shrink; HW is
-the minimum log end across the surviving ISR, and only that prefix is committed.
-A caught-up replica can rejoin, while a controller election truncates to HW and
+can leave even when the ISR falls below `min.insync.replicas`; that setting
+rejects subsequent `ALL_ISR` writes rather than preventing ISR shrink. HW is the
+minimum log end across the surviving ISR, and only that prefix is committed. A
+caught-up replica can rejoin, while a controller election truncates to HW and
 increments the leader epoch that fences old packets. The final comparison is
 therefore not one ladder from weak to strong: configured WAL standbys, dynamic
 ISR, fixed Raft majority, and asynchronous sinks answer different operational
