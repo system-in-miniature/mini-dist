@@ -2,6 +2,8 @@
 
 # MiniDist
 
+[![CI](https://github.com/system-in-miniature/MiniDist/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniDist/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+
 MiniDist is the sixth educational project in the System-in-Miniature series. It
 compares families of distributed replication protocols in the same deterministic
 simulation environment instead of packaging any single protocol as a production

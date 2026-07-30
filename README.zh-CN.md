@@ -2,6 +2,8 @@
 
 # MiniDist
 
+[![CI](https://github.com/system-in-miniature/MiniDist/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniDist/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+
 MiniDist 是 System-in-Miniature 系列的第六个教学项目：在同一个确定性
 仿真环境里比较分布式复制协议的谱系，而不是把某一个协议包装成生产库。
 当前里程碑交付了仿真基座和谱系两端：协议 1（Redis 式异步主从复制）与
