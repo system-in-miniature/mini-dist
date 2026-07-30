@@ -2,11 +2,12 @@
 
 [中文版](zh/index.md)
 
-MiniDist compares replication protocol families in one deterministic,
+MiniDist compares four replication protocol families in one deterministic,
 in-process laboratory. Read the chapters in order: the first half establishes
 the comparison method, simulator, shared vocabulary, and asynchronous-primary
-mechanism; the second half follows failover fencing into Raft and closes with
-side-by-side experiments.
+mechanism; the second half follows failover fencing into Raft, compares seven
+experiments, then opens the WAL-shipping and ISR/HW mechanisms behind the two
+middle columns.
 
 ## Chapters
 
@@ -27,9 +28,15 @@ side-by-side experiments.
    timeouts, voting rules, and election safety.
 7. [Raft II: Log Replication and Commit](tutorial/07-raft-replication.md) —
    AppendEntries consistency, current-term commit, and crash recovery.
-8. [Comparative Experiment Lab](tutorial/08-experiments.md) — complete
-   interpretation of labs 1–3: acknowledgement loss, split brain versus term
-   fencing, and read consistency.
+8. [Seven Experiments Across Four Protocols](tutorial/08-experiments.md) —
+   acknowledgement loss, slow replicas, reconnect windows, split-brain
+   authority, and the closing read-consistency matrix.
+9. [WAL Shipping, Flush Boundaries, and Timelines](tutorial/09-wal-shipping.md)
+   — logical WAL bytes, asynchronous/synchronous commit, retention, base
+   backup, and promotion timeline fencing.
+10. [ISR, High Watermark, and Controller Epochs](tutorial/10-isr.md) — dynamic
+    ISR membership, `min.insync.replicas`, HW, catch-up, clean election,
+    leader-epoch fencing, and guarded reads.
 
 ## How to use the book
 

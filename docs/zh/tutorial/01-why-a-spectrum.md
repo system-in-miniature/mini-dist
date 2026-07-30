@@ -12,7 +12,7 @@ MiniDist 不是第 101 个迷你 Raft 实现，而是一个受控的复制协议
 2. 找到仓库中的仿真、共享 API、异步主从、Raft、实验和测试层；
 3. 运行两种实现的正常复制实验，指出各自在什么边界确认写入；
 4. 区分逻辑 tick 与耗时或吞吐量；以及
-5. 准确说出 MiniDist 尚未实现的协议家族和生产特性。
+5. 找到全部四种已实现协议家族，并准确说出仍未实现的生产特性。
 
 ## 问题不是“哪个协议赢了？”
 
@@ -36,6 +36,10 @@ src/minidist/protocols/types.py       共享实验词汇
         |
         +--> protocols/async_primary/group.py
         |
+        +--> protocols/wal_shipping/group.py
+        |
+        +--> protocols/isr/group.py
+        |
         +--> protocols/raft/group.py
                     |
                     v
@@ -44,7 +48,15 @@ src/minidist/sim/                    时钟、调度、网络、故障、Trace
 
 底层控制时间与故障。`src/minidist/sim/clock.py` 中的 `SimClock.advance` 只在实验工具要求时改变整数。`src/minidist/sim/scheduler.py` 中的 `Scheduler.tick` 推进一次时钟并执行所有到期事件。`src/minidist/sim/network.py` 中的 `SimNet.send` 从私有 `random.Random(seed)` 获得延迟、丢弃和乱序选择。`src/minidist/sim/trace.py` 中的 `Trace.record` 追加带序号的观察。
 
-协议层拥有复制语义。`src/minidist/protocols/async_primary/group.py` 的 `AsyncPrimaryGroup.client_write` 修改 primary、为每个 replica 入队条目，然后立即返回。`src/minidist/protocols/raft/group.py` 的 `RaftGroup.client_write` 只接受 `AckLevel.QUORUM`，并驱动集群，直到多数派复制或有界尝试失败。相同的方法名没有抹平不同的确认契约。
+协议层拥有复制语义。`src/minidist/protocols/async_primary/group.py` 的
+`AsyncPrimaryGroup.client_write` 修改 primary、为每个 replica 入队条目，然后
+立即返回。`src/minidist/protocols/wal_shipping/group.py` 的
+`WalShippingGroup.client_write` flush 本地逻辑 WAL，并可等待配置的同步
+standby。`src/minidist/protocols/isr/group.py` 的 `IsrGroup.client_write`
+在请求 `ALL_ISR` 时等待动态 ISR 与 high watermark。
+`src/minidist/protocols/raft/group.py` 的 `RaftGroup.client_write` 只接受
+`AckLevel.QUORUM`，并驱动集群，直到多数派复制或有界尝试失败。相同的方法名
+没有抹平不同的确认契约。
 
 顶层存放可执行论断。`labs/exp01_normal_replication.py` 只使用公开 group 操作；`tests/labs/test_experiments.py::test_experiment_1_observes_delayed_convergence` 把观察变成回归断言。最可信的教程句子应能从正文追到实验、公开方法、内部机制和测试。
 
@@ -111,7 +123,8 @@ Python 3.12.2
 
 - MiniDist 完全在进程内运行；`SimNet.send` 运输 Python 值，不运输 TCP 包或 Redis/Raft 序列化帧。
 - tick 表示顺序，不表示毫秒；tick 数不能推出吞吐或延迟。
-- 协议 2（WAL 运输）与协议 3（ISR + high watermark）尚未实现。
+- 协议 2（WAL 运输）与协议 3（ISR + high watermark）已作为第 9、10 章的
+  有界教学模型实现，不是生产 server。
 - 没有 Redis Sentinel、Cluster、`WAIT`、RDB/AOF 策略、socket 客户端、Raft 成员变更或磁盘/fsync 模型。
 - 异步 crash 模型保留教学节点数据，以隔离复制丢失；这不是无持久化 Redis 的恢复保证。
 

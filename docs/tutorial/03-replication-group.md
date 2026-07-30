@@ -90,10 +90,12 @@ implemented acknowledgement boundaries.
 to `self._primary`, but it does not contact replicas or establish a quorum.
 `LINEARIZABLE` raises `UnsupportedLevelError`.
 
-`RaftGroup.client_read` accepts `LEADER` and `LINEARIZABLE` but rejects `LOCAL`.
-Its leader read is merely routed to the known leader and is not itself a quorum
-proof. Its linearizable path performs a simplified current-term heartbeat
-barrier and requires successful responses from a majority. The
+`RaftGroup.client_read` accepts all three levels. `LOCAL` reads a selected
+node specifically so experiment 6 can expose a stale follower; it makes no
+authority claim. Its leader read is merely routed to the known leader and is
+not itself a quorum proof. Its linearizable path performs a simplified
+current-term heartbeat barrier and requires successful responses from a
+majority. The
 [Raft mapping](../mapping.md#mapping-protocol-4-to-the-raft-paper) labels direct
 leader reads “semantically opposite” to a guarantee one might infer and the
 read-index barrier “intentionally simplified.”
@@ -206,10 +208,12 @@ states, that does not transform Redis into a strongly consistent quorum log.
 MiniDist's async group omits `WAIT` entirely and rejects `QUORUM`.
 
 Kafka's `acks=all` is evaluated against the in-sync replica set and interacts
-with `min.insync.replicas`; MiniDist reserves `ALL_ISR` as vocabulary but has no
-ISR implementation yet. PostgreSQL exposes synchronous commit modes with WAL
-durability and standby choices that do not reduce to MiniDist's enum. Raft
-commit is majority-log replication under term rules; it has no ISR.
+with `min.insync.replicas`; MiniDist's ISR model implements that bounded
+teaching path in Chapter 10. PostgreSQL exposes synchronous commit modes with
+WAL durability and standby choices; Chapter 9 explains why MiniDist's
+`QUORUM` mapping means all configured synchronous standbys rather than a Raft
+majority. Raft commit remains majority-log replication under term rules; it
+has no ISR.
 
 Read controls differ just as much. Redis replica reads can be stale. Raft
 linearizable reads require a leadership/quorum argument. Production systems add
@@ -219,9 +223,9 @@ those.
 
 Consult the
 [experiment matrix](../experiments.md#replication-protocol-experiment-matrix)
-before interpreting a level. Protocols 2 and 3 are marked not implemented;
-rows 4–7 are future experiments. Interface vocabulary is not implementation
-evidence.
+before interpreting a level. All four implementations and experiments 1–7
+have asserted cells, but interface vocabulary alone is still not
+implementation evidence.
 
 ## Exercises
 
@@ -281,7 +285,7 @@ evidence.
     | Protocol | Write levels | Read levels |
     |---|---|---|
     | Async primary | `NONE`, `LEADER`; rejects `QUORUM`, `ALL_ISR` | `LOCAL`, `LEADER`; rejects `LINEARIZABLE` |
-    | Raft | `QUORUM`; rejects `NONE`, `LEADER`, `ALL_ISR` | `LEADER`, `LINEARIZABLE`; rejects `LOCAL` |
+    | Raft | `QUORUM`; rejects `NONE`, `LEADER`, `ALL_ISR` | `LOCAL`, `LEADER`, `LINEARIZABLE`; `LOCAL` is observation-only |
 
 ## Summary
 

@@ -19,8 +19,8 @@ By the end of this chapter, you will be able to:
 3. run both implementations of the normal-replication experiment and identify
    the exact point at which each acknowledges a write;
 4. distinguish a logical simulation tick from elapsed time or throughput; and
-5. state which planned protocol families and production features MiniDist does
-   **not** implement.
+5. locate all four implemented protocol families and state which production
+   features MiniDist still does **not** implement.
 
 ## The question is not “Which protocol wins?”
 
@@ -64,6 +64,10 @@ src/minidist/protocols/types.py       shared experimental vocabulary
         |
         +--> protocols/async_primary/group.py
         |
+        +--> protocols/wal_shipping/group.py
+        |
+        +--> protocols/isr/group.py
+        |
         +--> protocols/raft/group.py
                     |
                     v
@@ -82,6 +86,11 @@ The protocol layer owns replication semantics. In
 `src/minidist/protocols/async_primary/group.py`,
 `AsyncPrimaryGroup.client_write` mutates the primary, enqueues an entry for
 each replica, and immediately returns. In
+`src/minidist/protocols/wal_shipping/group.py`, `WalShippingGroup.client_write`
+flushes local logical WAL and optionally waits for configured synchronous
+standbys. In `src/minidist/protocols/isr/group.py`,
+`IsrGroup.client_write` waits for the dynamic ISR and high watermark when
+`ALL_ISR` is requested. In
 `src/minidist/protocols/raft/group.py`, `RaftGroup.client_write` accepts only
 `AckLevel.QUORUM` and drives the simulated cluster until a majority has
 replicated the entry or the bounded attempt fails. The same method name does
@@ -216,7 +225,8 @@ The resemblance has hard boundaries:
   TCP packets or serialized Redis/Raft frames.
 - A tick denotes ordering, not milliseconds. No throughput or latency claim
   follows from a tick count.
-- Protocols 2 (WAL transport) and 3 (ISR + high watermark) are not implemented.
+- Protocols 2 (WAL transport) and 3 (ISR + high watermark) are implemented as
+  the bounded teaching models in Chapters 9 and 10, not as production servers.
 - There is no Redis Sentinel, Redis Cluster, `WAIT`, RDB/AOF policy, socket
   client, Raft membership change, or disk/fsync model.
 - The async crash model preserves the educational node's data to isolate

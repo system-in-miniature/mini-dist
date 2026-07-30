@@ -2,7 +2,10 @@
 
 [English](../index.md)
 
-MiniDist 在同一个确定性进程内实验室中比较复制协议家族。请按顺序阅读：前半部建立比较方法、仿真器、共享词汇与异步主从机制；后半部从换主 fencing 进入 Raft，最后用并排实验收束。
+MiniDist 在同一个确定性进程内实验室中比较四种复制协议家族。请按顺序阅读：
+前半部建立比较方法、仿真器、共享词汇与异步主从机制；后半部从换主 fencing
+进入 Raft，用七个实验对照全谱系，再展开两列中间协议的 WAL shipping 与
+ISR/HW 机制。
 
 ## 全书目录
 
@@ -13,7 +16,14 @@ MiniDist 在同一个确定性进程内实验室中比较复制协议家族。�
 5. [换主与世代栅栏](tutorial/05-failover-fencing.md)——promotion、generation/lineage fence、主动收敛与旧 full-sync 拒绝。
 6. [Raft I：选举](tutorial/06-raft-election.md)——任期、随机超时、投票规则与选举安全。
 7. [Raft II：日志与提交](tutorial/07-raft-replication.md)——AppendEntries 一致性、当前任期提交与 crash 恢复。
-8. [对照实验课](tutorial/08-experiments.md)——完整解释实验 1–3：确认写丢失、双主与任期 fencing、读取一致性。
+8. [七个实验对照四种协议](tutorial/08-experiments.md)——确认写丢失、慢副本、
+   重连窗口、脑裂权威与收官的读一致性矩阵。
+9. [WAL 运输、Flush 边界与 Timeline](tutorial/09-wal-shipping.md)——逻辑
+   WAL 字节、异步/同步 commit、retention、base backup 与 promotion
+   timeline fencing。
+10. [ISR、High Watermark 与 Controller Epoch](tutorial/10-isr.md)——动态
+    ISR membership、`min.insync.replicas`、HW、追赶、clean election、
+    leader-epoch fencing 与 guarded read。
 
 ## 使用方式
 

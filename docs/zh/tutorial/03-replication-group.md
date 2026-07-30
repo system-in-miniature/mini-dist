@@ -54,7 +54,12 @@ Raft 不同。`src/minidist/protocols/raft/group.py` 的 `RaftGroup.client_write
 
 `AsyncPrimaryGroup.client_read` 接受 `LOCAL` 与 `LEADER`。指定 replica 的 `LOCAL` 可以有意观察落后值；`LEADER` 路由到 `self._primary`，但不联系 replica 或建立 quorum；`LINEARIZABLE` 抛出 `UnsupportedLevelError`。
 
-`RaftGroup.client_read` 接受 `LEADER` 与 `LINEARIZABLE`，拒绝 `LOCAL`。leader read 只路由到已知 leader，本身不构成 quorum 证明；linearizable 路径执行简化的当前任期 heartbeat barrier，并要求多数派成功响应。[Raft 映射](../mapping.md#协议-4-与-raft-论文映射)把直接 leader read 标为与可能推断出的保证“语义相反”，把 read-index barrier 标为“有意简化”。
+`RaftGroup.client_read` 接受三个 level。`LOCAL` 专门读取指定节点，让实验 6
+暴露 stale follower，不声明任何权威；leader read 只路由到已知 leader，本身
+不构成 quorum 证明；linearizable 路径执行简化的当前任期 heartbeat barrier，
+并要求多数派成功响应。[Raft 映射](../mapping.md#协议-4-与-raft-论文映射)把直接
+leader read 标为与可能推断出的保证“语义相反”，把 read-index barrier 标为
+“有意简化”。
 
 因此，词汇阻止了常见错误：把“从 leader 读”等同于“线性化读”。位置与一致性证据是不同维度。
 
@@ -132,13 +137,13 @@ uv run pytest -q tests/test_public_types.py tests/protocols/test_async_primary.p
 
 共享 level 是教学词汇，不是 Redis、PostgreSQL、Kafka 与 Raft 共同实现的标准 API。
 
-Redis 普通写通常在 primary 处理命令后返回。`WAIT` 可以等待 replica 确认，但[Redis 行为映射](../mapping.md#协议机制与真实系统复制机制映射)明确指出，它不会把 Redis 变成强一致 quorum log。MiniDist async group 完全省略 `WAIT` 并拒绝 `QUORUM`。
+Redis 普通写通常在 primary 处理命令后返回。`WAIT` 可以等待 replica 确认，但[Redis 行为映射](../mapping.md#协议机制与真实系统复制机制映射)明确指出，它不会把 Redis 变成强一致 quorum log。MiniDist async group 完全省略 `WAIT` 并拒绝 `QUORUM`。Kafka 的 `acks=all` 作用于 ISR，并与 `min.insync.replicas` 联动；第 10 章实现该有界教学路径。PostgreSQL 同步提交则由第 9 章映射为等待全部已配置同步 standby，不是 Raft 多数派。
 
 Kafka 的 `acks=all` 根据 ISR 判断，并与 `min.insync.replicas` 交互；MiniDist 只预留 `ALL_ISR` 词汇，尚无 ISR 实现。PostgreSQL 的同步提交模式涉及 WAL 耐久性与 standby 选择，不能缩减为本枚举。Raft commit 是任期规则下的多数派日志复制，没有 ISR。
 
 读取控制同样不同。Redis replica read 可以陈旧；Raft 线性化读需要领导权/quorum 论证。生产系统还增加会话、重试、去重、超时、拓扑发现、认证与线协议错误，MiniDist 结果 dataclass 都未建模。
 
-解释 level 前请看[实验矩阵](../experiments.md#复制协议实验矩阵)。协议 2、3 标为未实现，4–7 行是未来实验；接口词汇不是实现证据。
+解释 level 前请看[实验矩阵](../experiments.md#复制协议实验矩阵)。四种实现与实验 1–7 都已有断言单元格，但接口词汇本身仍不是实现证据。
 
 ## 练习
 
@@ -184,7 +189,7 @@ Kafka 的 `acks=all` 根据 ISR 判断，并与 `min.insync.replicas` 交互；M
     | 协议 | 写级别 | 读级别 |
     |---|---|---|
     | Async primary | `NONE`、`LEADER`；拒绝 `QUORUM`、`ALL_ISR` | `LOCAL`、`LEADER`；拒绝 `LINEARIZABLE` |
-    | Raft | `QUORUM`；拒绝 `NONE`、`LEADER`、`ALL_ISR` | `LEADER`、`LINEARIZABLE`；拒绝 `LOCAL` |
+    | Raft | `QUORUM`；拒绝 `NONE`、`LEADER`、`ALL_ISR` | `LOCAL`、`LEADER`、`LINEARIZABLE`；`LOCAL` 只用于观察 |
 
 ## 小结
 

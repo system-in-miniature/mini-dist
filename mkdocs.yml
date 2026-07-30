@@ -33,7 +33,9 @@ nav:
           - 5 · Failover and Fencing: tutorial/05-failover-fencing.md
           - 6 · Raft Election: tutorial/06-raft-election.md
           - 7 · Raft Replication: tutorial/07-raft-replication.md
-          - 8 · Comparative Experiments: tutorial/08-experiments.md
+          - 8 · Seven Experiments × Four Protocols: tutorial/08-experiments.md
+          - 9 · WAL Shipping: tutorial/09-wal-shipping.md
+          - 10 · ISR and High Watermark: tutorial/10-isr.md
       - Reference:
           - Architecture and scope: https://github.com/system-in-miniature/mini-dist#repository-layout
           - Mechanism mapping: mapping.md
@@ -50,7 +52,9 @@ nav:
           - 5 · 换主与世代栅栏: zh/tutorial/05-failover-fencing.md
           - 6 · Raft 选举: zh/tutorial/06-raft-election.md
           - 7 · Raft 日志与提交: zh/tutorial/07-raft-replication.md
-          - 8 · 对照实验课: zh/tutorial/08-experiments.md
+          - 8 · 七实验 × 四协议: zh/tutorial/08-experiments.md
+          - 9 · WAL 运输: zh/tutorial/09-wal-shipping.md
+          - 10 · ISR 与 High Watermark: zh/tutorial/10-isr.md
       - 参考资料:
           - 架构与范围: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md
           - 机制映射: zh/mapping.md

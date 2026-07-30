@@ -1,60 +1,56 @@
-# Chapter 8: Comparative Experiment Lab
+# Chapter 8: Seven Experiments Across Four Protocols
 
-MiniDist is valuable because it runs different replication semantics over the
-same state machine, logical clock, network, and fault vocabulary. This final
-chapter reads experiments 1–3 as controlled comparisons: normal convergence,
-acknowledged-write loss, and minority partition. It closes with read
-consistency, where similar method names deliberately do not imply equal
-guarantees.
+[中文版](../zh/tutorial/08-experiments.md)
+
+MiniDist now places four replication families over one deterministic simulator:
+an asynchronous primary, PostgreSQL-shaped WAL shipping, Kafka-shaped ISR/HW,
+and Raft. This chapter is the comparison desk. Seven labs vary one fault or
+consistency boundary at a time, then interpret why similar final values can
+come from different acknowledgement, membership, history, and authority rules.
 
 ## Learning objectives
 
 By the end of this chapter, you will be able to:
 
-- identify the independent variable and observed boundary in each lab;
-- explain why asynchronous and quorum acknowledgements diverge after failure;
-- distinguish split-brain dirty writes from Raft term fencing;
-- compare local, leader-routed, and linearizable reads without flattening them;
-- reproduce all six protocol runs and connect output to source and tests.
+1. identify the controlled boundary and observable in all seven experiments;
+2. compare all four protocols without treating shared enum names as equal
+   guarantees;
+3. explain slow-replica availability and reconnect behavior from membership
+   and retention rules;
+4. read the complete `ReadLevel × protocol` matrix, including unsupported and
+   blocked outcomes; and
+5. distinguish a stale local read from an authority-checked read after
+   leadership changes.
 
-## 1. How to read a deterministic experiment
+## 1. Evidence rules for the comparison
 
-All three labs use public `ReplicationGroup` operations defined by the shared
-vocabulary in `src/minidist/protocols/types.py`: write, read, tick, crash,
-restart, isolate, heal, and probe. The implementations are
-`AsyncPrimaryGroup` in
-`src/minidist/protocols/async_primary/group.py` and `RaftGroup` in
-`src/minidist/protocols/raft/group.py`.
+The shared vocabulary lives in `src/minidist/protocols/types.py`; concrete
+mechanisms live under `async_primary/group.py`, `wal_shipping/group.py`,
+`isr/group.py`, and `raft/group.py`. Every lab uses public group methods and
+returns dataclasses that `tests/labs/test_experiments.py` asserts. `SimClock`,
+`Scheduler`, `SimNet`, and `Trace` make one chosen event history repeatable.
 
-The common substrate controls nuisance variables. Both groups use `SimClock`,
-`Scheduler`, `SimNet`, and `Trace`; the same seed and script produce the same
-event ordering. A tick is not elapsed real time. These labs compare semantics,
-not throughput, latency, durability, or behavior on real sockets.
+A tick is ordering, never milliseconds. These labs do not benchmark latency,
+throughput, disks, or real sockets. Keep four moments separate: state before a
+fault, the requested acknowledgement boundary, state while authority is
+ambiguous, and state after convergence. A final equal dictionary alone does
+not reveal whether the client previously received an unsafe success.
 
-Each printed result is backed by assertions in
-`tests/labs/test_experiments.py`. The prose output helps a human interpret the
-run; the returned dataclasses give tests exact facts. A conclusion should be no
-broader than the state transition that the script controls.
+Experiments 1–3 predate protocols 2/3, so their runnable scripts directly expose
+async and Raft columns. The WAL/ISR cells in the full matrix are backed by
+focused protocol tests and the same public transitions, not by pretending
+those scripts accept nonexistent `--protocol wal|isr` flags. Experiments 4–7
+directly run all four columns.
 
-Keep three moments separate while reading a run: the state before the fault,
-the operation's acknowledgement boundary, and the state after recovery or
-convergence. Comparing only the final dictionaries would hide whether a client
-was told that an unsafe write had succeeded. Comparing only the acknowledgement
-would hide the authoritative state eventually selected. The experiment is the
-relationship among all three observations.
+## 2. Experiments 1–3: acknowledgement and authority
 
-## 2. Experiment 1: normal replication
-
-`labs/exp01_normal_replication.py:run_experiment()` writes
-`course=MiniDist`, observes a follower at the acknowledgement boundary, drives
-the system to convergence, and compares the final value and offset.
-
-### Asynchronous primary
+### Experiment 1 — normal replication
 
 Run:
 
 ```bash
 uv run python labs/exp01_normal_replication.py --protocol async
+uv run python labs/exp01_normal_replication.py --protocol raft
 ```
 
 Measured output:
@@ -65,25 +61,6 @@ Measured output:
 2) ack 边界处，观察 follower 状态机：None。
 3) 推进至收敛后，观察 follower 状态机：b'MiniDist'。
 4) 最终 offset：leader=1, follower=1；副本已收敛。
-```
-
-In `AsyncPrimaryGroup.client_write()`, the primary changes its dictionary and
-returns after scheduling replica messages. `AsyncPrimaryGroup.tick()` is what
-advances delivery. Therefore the empty follower at the ack boundary is expected
-behavior, not a race in the lab. Later convergence proves eventual delivery in
-this no-fault schedule.
-
-### Raft
-
-Run:
-
-```bash
-uv run python labs/exp01_normal_replication.py --protocol raft
-```
-
-Measured output:
-
-```text
 实验 1：正常复制（Raft）
 1) 写入在 offset=2 返回 ack；多数派复制后才 ack，随后 leaderCommit 传播到全部 follower。
 2) ack 边界处，观察 follower 状态机：None。
@@ -91,31 +68,22 @@ Measured output:
 4) 最终 offset：leader=2, follower=2；副本已收敛。
 ```
 
-`RaftGroup.client_write()` calls `_wait_for_commit()`, so its success boundary
-requires majority commit. Yet one selected follower may still show `None`
-immediately. The majority can be leader plus the *other* follower, and
-commit-index propagation to every node happens on later AppendEntries. Quorum
-acknowledgement means a majority-backed committed log entry, not synchronous
-application on all nodes. Offset 2 includes the election no-op at index 1.
+`AsyncPrimaryGroup.client_write()` returns after local apply and message
+scheduling. `RaftGroup.client_write()` waits for majority commit, although the
+observed third node may not yet have learned `leaderCommit`. WAL `LEADER`
+instead returns after the primary's simulated WAL flush; WAL `QUORUM` waits for
+every configured synchronous standby. ISR `LEADER` returns after local append;
+`ALL_ISR` waits for every current ISR member and HW. Four systems can all
+eventually converge while crossing four different success boundaries.
 
-The controlled result is not “both protocols are equally safe because both
-converge.” It is that both converge without faults while exposing different ack
-boundaries.
-
-## 3. Experiment 2: crash immediately after ack
-
-`labs/exp02_acked_write_loss.py:run_experiment()` writes
-`order:42=confirmed`, reads it from the current leader, crashes that leader
-without adding an unrelated delivery tick, performs failover, and reads from
-the new leader.
-
-### Asynchronous primary: acknowledged write lost
+### Experiment 2 — crash immediately after acknowledgement
 
 ```bash
 uv run python labs/exp02_acked_write_loss.py --protocol async
+uv run python labs/exp02_acked_write_loss.py --protocol raft
 ```
 
-Measured output:
+Measured result:
 
 ```text
 实验 2：ack 后立即 crash leader（异步主从）
@@ -124,24 +92,6 @@ Measured output:
 3) ack 后立即 crash primary，随后完成 failover。
 4) 新 leader=replica-1，读取 order:42：None。
 结论：已确认写丢失。
-```
-
-The write result is true because `AsyncPrimaryGroup.client_write()` defines
-`LEADER` as local application. `AsyncPrimaryGroup.crash()` marks the node dead
-and partitions its links, so the queued packet cannot leak across the intended
-fault boundary. `AsyncPrimaryGroup.promote()` makes the stale replica
-authoritative. The missing read is the expected counterexample to interpreting
-this ack as failover durability.
-
-### Raft: quorum-confirmed write survives
-
-```bash
-uv run python labs/exp02_acked_write_loss.py --protocol raft
-```
-
-Measured output:
-
-```text
 实验 2：ack 后立即 crash leader（Raft）
 1) client 写入 order:42=confirmed；leader 在 offset=2 返回 ack=True。
 2) 故障前从 leader 读取：b'confirmed'。
@@ -150,123 +100,161 @@ Measured output:
 结论：多数派确认的写在换主后仍在。
 ```
 
-Here `RaftGroup._advance_commit()` required majority storage of a current-term
-entry before the client succeeded. `RaftGroup._receive_request_vote()` permits
-votes only for a candidate whose log is at least as up to date. The new
-majority leader therefore contains the committed prefix. The final
-`ReadLevel.LINEARIZABLE` call additionally obtains a read-index quorum before
-returning `confirmed`.
+No delivery tick is inserted before the async crash. A stale replica becomes
+authoritative and the local-only acknowledgement disappears. Raft's committed
+entry is held by a majority, and its voting freshness rule prevents a candidate
+without that prefix from winning.
 
-This result assumes MiniDist's persistent fields survive the modeled crash. It
-does not test disks, correlated failures, or loss of a majority.
+For WAL shipping, the result depends on the requested mode and promotion
+candidate: a `LEADER` write is locally flushed but may not yet exist on an
+asynchronous standby; a successful `QUORUM` write has been flushed by every
+configured synchronous standby. For ISR, successful `ALL_ISR` means the entry
+is at or below HW on all current ISR members; clean controller election chooses
+one of those members and truncates only above HW. Preconditions—not protocol
+brand names—explain survival.
 
-## 4. Experiment 3: old leader in a minority
-
-`labs/exp03_partition_old_leader.py` isolates the old authority
-bidirectionally, permits the majority side to continue, heals the partition,
-and checks convergence.
-
-### Asynchronous protocol: two accepted dirty histories
+### Experiment 3 — old leader in a minority
 
 ```bash
-uv run python labs/exp03_partition_old_leader.py --protocol async
+uv run python labs/exp03_partition_old_leader.py --protocol both
 ```
 
-Measured output:
+Measured conclusions:
 
 ```text
 实验 3：异步主从的双主脏写
 1) 隔离旧 primary primary；其本地写 ack=True。
 2) 显式 promote replica-1；新 primary 本地写 ack=True。
-3) 分区中两侧状态：旧侧 old=b'old-primary', new=None；新侧 old=None, new=b'new-primary'。
 4) 愈合后按新 primary 世代全量收敛：converged=True, old=None, new=b'new-primary'。
 结论：协议 1 没有任期 fencing；分区中两侧都可确认本地脏写。
-```
 
-The old side accepts because `AsyncPrimaryGroup.client_write()` waits for no
-peer. The lab manually calls `promote()` on the other side, which also accepts
-locally. This is genuine split-brain dirty state in the experiment, not two
-committed consensus histories. On healing, generation/lineage fencing and full
-synchronization choose the new primary's history; the old-side write is
-discarded rather than merged.
-
-### Raft: minority rejection and log repair
-
-```bash
-uv run python labs/exp03_partition_old_leader.py --protocol raft
-```
-
-Measured output:
-
-```text
 实验 3：旧 leader 位于少数派的 Raft 网络分区
 1) term=1 的旧 leader node-1 被双向隔离；其新写 QUORUM ack=False。
 2) 多数派在 term=3 选出 node-3；继续写入的 QUORUM ack=True。
 3) 分区愈合后旧 leader 角色=follower；日志收敛=True。
 4) 最终状态：minority-only=None, majority=b'continues'。
-结论：高任期完成 fencing，少数派未提交分叉被新 leader 日志覆盖。
 ```
 
-The isolated leader can append locally, but
-`RaftGroup._wait_for_commit()` cannot observe a quorum and returns false. Two
-connected nodes elect a higher-term leader and commit. After healing,
-`RaftGroup._receive_append_entries()` makes the old leader step down;
-`prevLogIndex`/`prevLogTerm` rejection and
-`_receive_append_response()` retry move `nextIndex` backward until the new
-leader can overwrite the uncommitted fork.
+Async manual promotion creates a new generation and replication ID; delivery
+fences select that history, but both local primaries could acknowledge dirty
+writes during the partition. WAL promotion similarly increments a timeline and
+rejects queued old-timeline bytes; this protects branch application but does
+not make an async commit present on the promoted standby. ISR's controller
+increments leader epoch, chooses an ISR member, and truncates to HW. Raft's
+majority elects a higher-term leader, then AppendEntries conflict repair
+overwrites the uncommitted suffix. A fence selects authority; a separate
+catch-up mechanism converges data.
 
-The new leader appears in term 3 for this seed and schedule. The important
-claim is monotonic higher-term authority and quorum behavior, not that every
-execution elects in exactly term 3.
-
-## 5. Read consistency is another independent choice
-
-The shared enum does not promise that both protocols implement every level.
-`AsyncPrimaryGroup.client_read()` supports:
-
-- `LOCAL`: read a selected node, possibly stale;
-- `LEADER`: route to the manually current primary, without a quorum proof.
-
-It rejects `LINEARIZABLE`. `RaftGroup.client_read()` rejects `LOCAL`, provides a
-direct `LEADER` read, and implements a simplified `LINEARIZABLE` barrier. For
-the barrier it creates a read context, broadcasts empty AppendEntries in the
-current term, and waits for successful responses from a majority before
-reading the leader's applied dictionary.
-
-A direct Raft `LEADER` read is intentionally weaker: the locally known leader
-may be partitioned and unaware of a newer term. Experiment 3's old leader
-illustrates that risk. The read-index round proves current-term majority
-reachability in this model. It does not append the read command to the log.
-
-The [experiment behavior
-matrix](../experiments.md) and [DIFFERENCES
-mapping](../mapping.md#differences-between-this-implementation-and-textbook-raft)
-state the boundary: this is a single-round educational barrier, without leases,
-batching, cross-thread apply waits, or full client-session machinery.
-
-## 6. What these experiments do and do not prove
-
-The repository's [full experiment matrix](../experiments.md) marks protocol 1
-and protocol 4 conclusions as asserted and protocols 2/3 as not implemented.
-Do not fill those blank columns by analogy.
-
-The labs prove deterministic state and fault semantics for two in-process
-implementations. They do not prove:
-
-- real network interoperability or wire compatibility;
-- performance, latency, or availability percentages;
-- disk durability, fsync ordering, or power-loss recovery;
-- Redis Sentinel/Cluster correctness;
-- production Raft membership changes, snapshots, storage, or client sessions;
-- safety under Byzantine nodes.
-
-This honesty does not weaken the lab. It identifies the controlled variable:
-acknowledgement, authority, log, and read rules under the same crash and
-partition schedule.
-
-## 7. Test the experiment claims
+## 3. Experiment 4: one slow replica
 
 Run:
+
+```bash
+uv run python labs/exp04_slow_replica.py
+```
+
+Measured output:
+
+```text
+实验 4 [async]：write_available=True
+slow_replica_stale=True; membership=replica is not a voter
+实验 4 [wal]：write_available=True
+slow_replica_stale=True; membership=async standby does not gate commit
+实验 4 [isr]：write_available=True
+slow_replica_stale=True; membership=removed from ISR
+实验 4 [raft]：write_available=True
+slow_replica_stale=True; membership=fixed voter; majority unaffected
+```
+
+The Boolean column is intentionally insufficient. Async replicas never vote.
+The WAL lab configures the slow standby as asynchronous, so local-flush
+`LEADER` commit does not wait; configuring it as synchronous would change the
+result for `QUORUM`. ISR detects lag and changes its dynamic membership, while
+remaining writable only because two members still meet
+`min.insync.replicas=2`. Raft membership stays fixed; two of three nodes still
+form a majority. “Available with one slow copy” comes from four mechanisms.
+
+## 4. Experiment 5: reconnect inside and outside retention
+
+```bash
+uv run python labs/exp05_replica_reconnect.py
+```
+
+Measured output:
+
+```text
+实验 5 [async]：inside_window=incremental; outside_window=full
+实验 5 [wal]：inside_window=incremental; outside_window=full
+实验 5 [isr]：inside_window=incremental; outside_window=full
+实验 5 [raft]：inside_window=log replay; outside_window=log replay
+```
+
+Async checks replication ID plus bounded backlog coverage. WAL checks timeline
+plus retained LSN coverage. ISR checks whether the follower's next offset still
+exists in the retained leader log and only re-adds it after catch-up. Each uses
+atomic whole-state replacement outside its teaching window. Raft is the
+deliberate exception: M3 implements no snapshot or compaction, so `nextIndex`
+fallback replays its unbounded log for both sizes. “Full” is not a universal
+protocol operation, and absence of full transfer is not automatically better;
+the log is allowed to grow without bound.
+
+## 5. Experiment 6: the closing read-consistency matrix
+
+```bash
+uv run python labs/exp06_read_consistency.py
+```
+
+Measured output:
+
+```text
+实验 6：ReadLevel × 协议
+async: LOCAL=stale, LEADER=fresh, LINEARIZABLE=unsupported
+wal: LOCAL=stale, LEADER=fresh, LINEARIZABLE=unsupported
+isr: LOCAL=stale, LEADER=fresh, LINEARIZABLE=blocked
+raft: LOCAL=stale, LEADER=fresh, LINEARIZABLE=fresh
+```
+
+| Protocol | `LOCAL` observation | `LEADER` observation | Authority-checked result |
+|---|---|---|---|
+| Async primary | lagging replica is stale | current primary has `v` | `LINEARIZABLE` unsupported |
+| WAL shipping | lagging standby is stale | primary has locally flushed `v` | `LINEARIZABLE` unsupported |
+| ISR + HW | lagging follower is stale | leader exposes append above HW | blocked because HW/lease proof is absent |
+| Raft | isolated follower is stale | current leader has committed `v` | fresh after read-index quorum |
+
+This is the book's closing diagram because it prevents two common collapses.
+First, `LEADER=fresh` describes this schedule's observed value, not a general
+authority proof. A partitioned old leader can still return an old local value.
+Second, unsupported and blocked differ: async/WAL implement no such guarantee;
+ISR has a guard and refuses because this particular entry is above HW; Raft
+obtains the current-term quorum evidence.
+
+## 6. Experiment 7: stale old side and authority guard
+
+```bash
+uv run python labs/exp07_split_brain_lease.py
+```
+
+Measured output:
+
+```text
+实验 7 [async]：old_LOCAL=b'before'; current=b'after'; authority_guard=unsupported
+实验 7 [wal]：old_LOCAL=b'before'; current=b'after'; authority_guard=unsupported
+实验 7 [isr]：old_LOCAL=b'before'; current=b'after'; authority_guard=lease fenced
+实验 7 [raft]：old_LOCAL=b'before'; current=b'after'; authority_guard=read-index fenced
+```
+
+All old sides retain a readable pre-change value, proving that write fencing
+does not erase stale local state. Async generation and WAL timeline checks
+fence incoming replication traffic, but neither protocol supplies a
+linearizable/lease read guard. ISR `lease_read()` requires controller ownership,
+an unexpired logical lease, sufficient ISR, and no append above HW. Raft's
+linearizable path requires a current-term read-index majority. The latter two
+both fail closed, but one is a pedagogical controller/HW lease and the other a
+quorum protocol operation.
+
+## 7. Verification and support boundary
+
+Run the asserted lab suite:
 
 ```bash
 uv run pytest -q tests/labs/test_experiments.py
@@ -275,86 +263,70 @@ uv run pytest -q tests/labs/test_experiments.py
 Measured output:
 
 ```text
-......                                                                   [100%]
-6 passed in 0.03s
+...........                                                              [100%]
+11 passed in 0.07s
 ```
 
-These are the six experiment assertions: normal async, normal Raft, failover
-loss, failover survival, async split brain, and Raft fencing.
+The assertions cover six original async/Raft runs plus all four columns for
+experiments 4–7. The [experiment matrix](../experiments.md) records every
+cell, while Chapters [9](09-wal-shipping.md) and [10](10-isr.md) provide the
+new protocol mechanisms.
 
-For protocol mechanisms as well as lab outputs:
-
-```bash
-uv run pytest -q tests/protocols/test_async_primary.py \
-  tests/protocols/test_raft.py tests/labs/test_experiments.py
-```
-
-Measured output:
-
-```text
-............................                                             [100%]
-28 passed in 0.06s
-```
-
-The exact duration may vary by machine; the pass count and zero failures are
-the acceptance facts.
+These experiments prove deterministic in-process state transitions. They do
+not prove network interoperability, wall-clock availability, disk behavior,
+Byzantine safety, Redis/PostgreSQL/Kafka wire compatibility, or production
+operations. The explicit `lose_unfsynced=True` paths model one durability
+boundary, not real storage.
 
 ## 8. Exercises
 
 ### Understanding
 
-1. In experiment 1, why may the observed Raft follower still be empty when the
-   QUORUM write has succeeded?
-2. In experiment 3, what separate jobs are performed by a higher term and by
-   AppendEntries conflict repair?
+1. In experiment 4, why is `write_available=True` not a common guarantee?
+2. Why does ISR `LINEARIZABLE=blocked` convey more information than
+   `unsupported`?
+3. Which two independent mechanisms repair an old Raft leader after a
+   partition?
 
 ??? note "Reference answers"
 
-    1. A three-node majority needs only the leader and one follower. The
-       selected observer may be the other follower, and it may not yet have
-       received the commit-index propagation that makes it apply the entry.
-    2. The higher term establishes and fences authority, forcing the stale
-       leader to step down. Prefix checking, suffix deletion, and `nextIndex`
-       retry replace its uncommitted branch with the authoritative log.
+    1. The setup requests different supported levels and changes membership
+       differently: no vote, async standby, dynamic ISR, or fixed majority.
+    2. ISR implements an HW/lease/min-insync guard and the current state fails
+       it. Unsupported protocols offer no such path at all.
+    3. A higher term establishes authority and forces step-down; log prefix
+       checks, suffix deletion, and `nextIndex` retry repair data.
 
 ### Hands-on
 
-3. Run all six commands in this chapter and save only their stdout in a
-   temporary comparison note. Acceptance: identify one ack-boundary observation
-   and one final-state observation for each experiment; do not treat tick
-   numbers as milliseconds.
-4. Create a temporary script that elects a Raft leader, isolates it, and
-   attempts both `ReadLevel.LEADER` and `ReadLevel.LINEARIZABLE`. Acceptance:
-   record the direct leader-read result and the linearizable read's
-   `RuntimeError` containing `read-index quorum`. Do not edit `src/`.
+4. Write a temporary pytest that calls experiment 6 twice and asserts the two
+   complete matrices are equal. Then assert the four `LINEARIZABLE` statuses
+   in protocol order.
 
-??? note "Reference answers"
+??? note "Reference answer"
 
-    3. Experiment 1 pairs the immediate follower value with final convergence;
-       experiment 2 pairs `ack=True` with the value after failover; experiment
-       3 pairs writes accepted/rejected during partition with the converged
-       post-heal state. The six measured blocks above are the reference.
-    4. Use `RaftGroup.run_until_leader()`, write a setup value with
-       `AckLevel.QUORUM`, call `isolate(leader)`, then issue the two reads.
-       `LEADER` reads the locally applied value because it performs no barrier;
-       `LINEARIZABLE` drives ticks and raises when a majority does not
-       acknowledge. This mirrors
-       `test_linearizable_read_fails_without_a_current_term_quorum()` in
-       `tests/protocols/test_raft.py`.
+    ```python
+    from labs.exp06_read_consistency import run_experiment
+
+    def test_read_matrix_replays():
+        first = run_experiment(verbose=False)
+        assert first == run_experiment(verbose=False)
+        assert [first[p]["LINEARIZABLE"].status for p in
+                ("async", "wal", "isr", "raft")] == [
+            "unsupported", "unsupported", "blocked", "fresh"
+        ]
+    ```
+
+    Save it under `/tmp` and run
+    `PYTHONPATH=src:. uv run pytest -q /tmp/test_minidist_ch08.py`.
 
 ## Summary
 
-The three controlled experiments expose a protocol spectrum. Under normal
-delivery both implementations converge, but their ack boundaries differ.
-After an immediate crash, a local asynchronous ack can disappear while a
-Raft quorum commit survives. During partition, two manually designated
-asynchronous primaries can accept incompatible dirty writes, whereas an
-isolated Raft leader cannot commit and is later fenced and repaired. Read
-levels add a second axis: routing to a leader is not the same as proving
-current majority authority. Together, the labs show why distributed-system
-APIs must name their actual guarantees instead of flattening unlike mechanisms
-behind one successful return value.
-
-## M3 protocol update
-
-Protocols 2/3 have been added; see the comparison table in `docs/experiments.md`.
+Seven experiments turn the protocol spectrum into observable boundaries.
+Normal convergence hides different acknowledgement rules; failover exposes
+which successful writes reached a future authority; partitions separate
+fencing from data repair; slow and reconnecting replicas reveal static,
+configured, and dynamic membership; and the final read matrix separates
+location from authority evidence. Shared APIs make the questions comparable,
+while explicit refusal, HW blocking, timeline/epoch checks, and read-index keep
+the answers honestly different.
