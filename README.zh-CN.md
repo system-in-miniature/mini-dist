@@ -2,7 +2,7 @@
 
 # MiniDist
 
-[![CI](https://github.com/system-in-miniature/MiniDist/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniDist/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+[![CI](https://github.com/system-in-miniature/mini-dist/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/mini-dist/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
 
 MiniDist 是 System-in-Miniature 系列的第六个教学项目：在同一个确定性
 仿真环境里比较分布式复制协议的谱系，而不是把某一个协议包装成生产库。
