@@ -18,6 +18,8 @@
 | backlog 保存结构化 SET 条目 | Redis backlog 保存复制协议的字节流 | **有意简化** | MiniDist 关注窗口和 offset，不教授 RESP 编码或字节边界。 |
 | promote 是显式公开方法 | `REPLICAOF NO ONE`，或 Sentinel/Cluster 控制面触发角色切换 | **有意简化** | 不实现故障检测、投票、Sentinel 配置纪元或自动选主，以便单独观察数据面。 |
 | 新 primary 获得新 replication ID，旧 backlog 清空 | Redis promotion 形成新复制历史，并保留 secondary replication ID 帮助部分重同步 | **有意简化** | MiniDist 只保留一个当前 ID，因此换主后的旧节点会走全量同步。 |
+| 每条复制投递携带 source primary、generation 与 replication ID，接收端只接受当前世代 | Redis 用 replication ID 校验复制历史；Sentinel/Cluster 控制面用配置纪元 fence 过期所有权 | **有意简化** | MiniDist generation 是进程内手动换主纪元，不是完整 Sentinel/Cluster 配置纪元协议；它阻止旧 primary 排队的 full-sync 与 backlog 投递越过换主。 |
+| promote 后立即为每个 alive 副本发起同步 | Redis 副本会被重定向或重连到选定 master，并按其历史同步 | **有意简化** | 不实现发现或自动 failover 控制面；显式 `promote` 负责拓扑切换并主动启动收敛。分区中的投递会被丢弃，`heal` 会重试同步。 |
 | crash 清空易失控制状态、保留教学节点的 dataset | Redis 重启后的 dataset 取决于 RDB/AOF 与持久化配置 | **有意简化** | 这里把 dataset 当作持久态，以隔离“复制尚未到达新主”这一变量；不是无持久化 Redis 的断电模型。 |
 | `AckLevel.LEADER` 表示 primary 已在内存 dict 应用 | 统一接口草案把 `LEADER` 描述为 leader 落盘；Redis 普通写成功不等于 fsync | **语义相反** | 该级别在协议 1 中绝不代表磁盘 durability。返回消息与实验 2 都刻意揭示这点。 |
 | 拒绝 `AckLevel.QUORUM` / `ALL_ISR` | Redis 的 `WAIT` 可等待 replica ack，但仍不把 Redis 变成强一致 quorum 日志 | **有意简化** | 当前协议只建模默认异步写路径；不偷偷把 `WAIT` 当作 Raft commit。 |
@@ -28,7 +30,8 @@
 本里程碑没有实现 Redis Sentinel、Cluster、`WAIT`、RDB/AOF 策略、磁盘
 fsync 丢失窗口或真实 RESP 传输。它们不能从当前测试成功推断为“已支持”。
 协议 1 的可证明结论只限于：异步 ack、replica sink、offset/backlog
-重同步、全量替换与手动换主。
+重同步、带 fencing 的全量替换与手动换主。因此 MiniDist 不再声称原
+M1/M2 计划已经完整交付；磁盘 fsync 丢失窗口注入明确保留为 M3 计划能力。
 
 # 协议 4 与 Raft 论文映射
 
@@ -36,19 +39,19 @@ fsync 丢失窗口或真实 RESP 传输。它们不能从当前测试成功推�
 *In Search of an Understandable Consensus Algorithm*。实现按论文 Figure 2
 的状态与 RPC 规则组织，而不是把共享内存状态更新伪装成 RPC。
 
-| MiniDist Raft 机制 | 论文小节 | 对应关系与实验边界 |
-|---|---|---|
-| follower / candidate / leader 与单调任期 | §5、§5.1 | 收到更高任期 RequestVote、AppendEntries 或响应时更新持久任期并降级；实验 3 由此 fence 旧 leader。 |
-| 随机化 election timeout、候选人自投票、RequestVote 多数派选主 | §5.2、§5.6 | timeout 从构造函数 seed 所属的私有随机源抽取；不读取墙上时间或模块级随机状态。 |
-| 候选日志必须至少与 voter 一样新 | §5.4.1 | 按 `(lastLogTerm, lastLogIndex)` 字典序判断，保护已提交日志不会选出到缺失它的 leader。 |
-| AppendEntries 心跳与日志复制 | §5.2、§5.3 | 所有 RPC 经 `SimNet`；heartbeat 是 entries 为空的 AppendEntries。 |
-| `prevLogIndex` / `prevLogTerm` 一致性检查、冲突后缀删除、`nextIndex` 回退重试 | §5.3、Figure 2 | follower 返回冲突任期的起点；leader 从该点重发。实验 3 愈合时覆盖少数派旧 leader 的未提交分叉。 |
-| 多数派复制推进 commitIndex | §5.3 | `matchIndex` 覆盖多数派才可能提交；QUORUM 是唯一支持的写 ack。 |
-| 只用“当前任期条目”按副本数推进 commitIndex | §5.4.2 | 代码 why 注释直接引用该节反例；旧任期条目不能仅因当前存于多数派就直接计数提交，而是随当前任期条目的已提交前缀间接提交。 |
-| leader 当选后追加 no-op | §8 | no-op 提供当前任期可提交点，并在恢复/换主后安全提交此前前缀；它不改变 KV。 |
-| `currentTerm`、`votedFor`、log 持久，其他状态易失 | §5 / Figure 2 | crash 保留三项；restart 以 follower、commitIndex=0、空状态机重建，随后从 leaderCommit 重放已提交前缀。 |
-| LEADER 直读 | §8 的 client interaction 背景 | 只做路由到当前已知最高任期 leader，不额外证明 leader 仍掌握多数派，因此不声称线性化。 |
-| LINEARIZABLE read-index 简化屏障 | §8 的只读请求规则 | leader 在当前任期发空 AppendEntries，并收到多数派成功响应后读取已应用状态机；不把读命令写入日志。 |
+| MiniDist Raft 机制 | 论文小节 | 档位 | 对应关系与实验边界 |
+|---|---|---|---|
+| follower / candidate / leader 与单调任期 | §5、§5.1 | **等价** | 收到更高任期 RequestVote、AppendEntries 或响应时更新持久任期并降级；实验 3 由此 fence 旧 leader。 |
+| 随机化 election timeout、候选人自投票、RequestVote 多数派选主 | §5.2、§5.6 | **等价** | timeout 从构造函数 seed 所属的私有随机源抽取；不读取墙上时间或模块级随机状态。 |
+| 候选日志必须至少与 voter 一样新 | §5.4.1 | **等价** | 按 `(lastLogTerm, lastLogIndex)` 字典序判断，保护已提交日志不会选出到缺失它的 leader。 |
+| AppendEntries 心跳与日志复制 | §5.2、§5.3 | **等价** | 所有 RPC 经 `SimNet`；heartbeat 是 entries 为空的 AppendEntries。 |
+| `prevLogIndex` / `prevLogTerm` 一致性检查、冲突后缀删除、`nextIndex` 回退重试 | §5.3、Figure 2 | **等价** | follower 返回冲突任期的起点；leader 从该点重发。实验 3 愈合时覆盖少数派旧 leader 的未提交分叉。 |
+| 多数派复制推进 commitIndex | §5.3 | **等价** | `matchIndex` 覆盖多数派才可能提交；QUORUM 是唯一支持的写 ack。 |
+| 只用“当前任期条目”按副本数推进 commitIndex | §5.4.2 | **等价** | 代码 why 注释直接引用该节反例；旧任期条目不能仅因当前存于多数派就直接计数提交，而是随当前任期条目的已提交前缀间接提交。 |
+| leader 当选后追加 no-op | §8 | **有意简化** | no-op 提供当前任期可提交点，并在恢复/换主后安全提交此前缀；它不改变 KV，且省略 §8 的 client session 处理。 |
+| `currentTerm`、`votedFor`、log 持久，其他状态易失 | §5 / Figure 2 | **有意简化** | crash 在进程内 durable mapping 中保留三项；restart 以 follower、commitIndex=0、空状态机重建，再从 leaderCommit 重放已提交前缀；不声称磁盘/fsync 语义。 |
+| LEADER 直读 | §8 的 client interaction 背景 | **语义相反** | 只路由到当前已知最高任期 leader，不证明它仍掌握多数派；刻意不提供调用者可能从“leader read”推断的线性一致保证。 |
+| LINEARIZABLE read-index 简化屏障 | §8 的只读请求规则 | **有意简化** | leader 在当前任期发空 AppendEntries，并收到多数派成功响应后读取已应用状态机；读命令不入日志，并省略 lease、批处理与 apply-wait 机制。 |
 
 ## 本实现与教科书 Raft 的偏差
 

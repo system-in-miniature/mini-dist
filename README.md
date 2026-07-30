@@ -31,9 +31,12 @@ The project therefore uses:
 - an entirely in-process simulation, so real networks, performance numbers, and
   production reliability are not mixed into the educational conclusions.
 
-M1 and M2 are implemented: protocol 1 (async primary-backup) and protocol 4
-(Raft). Protocol 2 (Postgres-style WAL shipping) and protocol 3 (Kafka-style
-ISR + HW) are planned for M3 and not yet implemented.
+The currently delivered slice includes protocol 1 (async primary-backup),
+protocol 4 (Raft), and deterministic message/network/lifecycle faults. The
+original M1/M2 plan is only partially delivered: its disk-fsync loss window is
+not implemented and remains an explicit M3 item. Protocol 2 (Postgres-style WAL
+shipping) and protocol 3 (Kafka-style ISR + HW) are also planned for M3 and are
+not yet implemented.
 
 ## Quick Start
 
@@ -44,11 +47,16 @@ uv sync --dev
 uv run pytest -q
 uv run python labs/exp01_normal_replication.py
 uv run python labs/exp02_acked_write_loss.py
+uv run python labs/exp03_partition_old_leader.py
 ```
 
 Experiment 2 first receives a successful ack, then crashes the primary before
 the replication message is delivered and promotes the stale replica. It finally
 shows that the write cannot be read from the new primary.
+
+Experiment 3 prints the protocols side by side: an isolated asynchronous old
+primary and a manually promoted new primary both accept dirty local writes,
+while Raft rejects the isolated old leader's quorum write through term fencing.
 
 ## Repository Layout
 

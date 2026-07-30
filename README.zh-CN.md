@@ -24,8 +24,10 @@ Kafka 用同步副本集合（in-sync replicas, ISR）+ 高水位（high waterma
 - 不强行抹平语义：协议不支持 `QUORUM` 或 `LINEARIZABLE` 时明确报错；
 - 全进程内仿真，不把真实网络、性能数字或生产可靠性混入教学结论。
 
-当前已实现 M1 与 M2：协议 1（异步主从）与协议 4（Raft）。协议 2
-（Postgres 式 WAL 运输）与协议 3（Kafka 式 ISR + HW）规划在 M3，尚未实现。
+当前已交付的切片包括协议 1（异步主从）、协议 4（Raft），以及确定性的
+消息、网络和节点生命周期故障。原 M1/M2 计划目前只是部分交付：其中的
+磁盘 fsync 丢失窗口尚未实现，明确留作 M3 项目。协议 2（Postgres 式
+WAL 运输）与协议 3（Kafka 式 ISR + HW）也规划在 M3，尚未实现。
 
 ## 快速开始
 
@@ -36,10 +38,14 @@ uv sync --dev
 uv run pytest -q
 uv run python labs/exp01_normal_replication.py
 uv run python labs/exp02_acked_write_loss.py
+uv run python labs/exp03_partition_old_leader.py
 ```
 
 实验 2 会先得到成功 ack，然后在复制消息送达前 crash primary 并 promote
 旧副本，最后展示新 primary 上读不到该写。
+
+实验 3 并排输出两种协议：被隔离的异步旧 primary 与手动提升的新 primary
+都会接受本地脏写；Raft 则通过任期 fencing 拒绝旧 leader 的 quorum 写。
 
 ## 目录导览
 

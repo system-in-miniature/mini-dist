@@ -1,16 +1,26 @@
-"""Experiment 3: isolate a Raft leader, replace it, then heal its stale log.
+"""Experiment 3: contrast async split brain with Raft term fencing."""
 
-Only public ``RaftGroup`` operations are used.  The old leader remains leader
-in its own obsolete term while isolated, but cannot turn a local append into a
-QUORUM acknowledgement.  The majority elects a higher-term leader and keeps
-serving.  On healing, the higher term fences the old leader and AppendEntries'
-prefix check replaces its conflicting suffix.
-"""
-
+import argparse
 from dataclasses import dataclass
 
-from minidist.protocols import AckLevel
+from minidist.protocols import AckLevel, ReadLevel
+from minidist.protocols.async_primary import AsyncPrimaryGroup
 from minidist.protocols.raft import RaftGroup
+
+
+@dataclass(frozen=True, slots=True)
+class AsyncExperimentResult:
+    old_primary: str
+    new_primary: str
+    old_primary_write_accepted: bool
+    new_primary_write_accepted: bool
+    old_primary_value_during_partition: bytes | None
+    old_primary_new_value_during_partition: bytes | None
+    new_primary_value_during_partition: bytes | None
+    new_primary_old_value_during_partition: bytes | None
+    converged_after_heal: bool
+    old_dirty_value_after_heal: bytes | None
+    new_dirty_value_after_heal: bytes | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +37,111 @@ class ExperimentResult:
     majority_value: bytes | None
 
 
-def run_experiment(*, verbose: bool = True) -> ExperimentResult:
+def run_experiment(
+    *,
+    protocol: str = "raft",
+    verbose: bool = True,
+) -> AsyncExperimentResult | ExperimentResult:
+    """Run one partition protocol using only its public group API."""
+
+    if protocol == "async":
+        return _run_async_experiment(verbose=verbose)
+    if protocol != "raft":
+        raise ValueError("protocol must be 'async' or 'raft'")
+    return _run_raft_experiment(verbose=verbose)
+
+
+def _run_async_experiment(*, verbose: bool) -> AsyncExperimentResult:
+    group = AsyncPrimaryGroup(
+        replica_ids=("replica-1", "replica-2"),
+        replication_delay=1,
+        seed=303,
+    )
+    old_primary = group.primary
+    group.isolate(old_primary)
+
+    old_write = group.client_write(
+        b"old-primary-dirty",
+        b"old-primary",
+        AckLevel.LEADER,
+    )
+    group.promote("replica-1")
+    new_primary = group.primary
+    new_write = group.client_write(
+        b"new-primary-dirty",
+        b"new-primary",
+        AckLevel.LEADER,
+    )
+    group.run_until_idle()
+
+    old_old_value = group.client_read(
+        b"old-primary-dirty",
+        ReadLevel.LOCAL,
+        node=old_primary,
+    ).value
+    old_new_value = group.client_read(
+        b"new-primary-dirty",
+        ReadLevel.LOCAL,
+        node=old_primary,
+    ).value
+    new_new_value = group.client_read(
+        b"new-primary-dirty",
+        ReadLevel.LEADER,
+    ).value
+    new_old_value = group.client_read(
+        b"old-primary-dirty",
+        ReadLevel.LEADER,
+    ).value
+
+    group.heal(old_primary)
+    group.run_until_idle()
+    state = group.probe()
+    reference = state.nodes[new_primary]
+    result = AsyncExperimentResult(
+        old_primary=old_primary,
+        new_primary=new_primary,
+        old_primary_write_accepted=old_write.accepted,
+        new_primary_write_accepted=new_write.accepted,
+        old_primary_value_during_partition=old_old_value,
+        old_primary_new_value_during_partition=old_new_value,
+        new_primary_value_during_partition=new_new_value,
+        new_primary_old_value_during_partition=new_old_value,
+        converged_after_heal=all(
+            node.data == reference.data
+            and node.offset == reference.offset
+            and node.replication_id == reference.replication_id
+            for node in state.nodes.values()
+        ),
+        old_dirty_value_after_heal=reference.data.get(b"old-primary-dirty"),
+        new_dirty_value_after_heal=reference.data.get(b"new-primary-dirty"),
+    )
+
+    if verbose:
+        print("实验 3：异步主从的双主脏写")
+        print(
+            f"1) 隔离旧 primary {old_primary}；其本地写 ack="
+            f"{result.old_primary_write_accepted}。"
+        )
+        print(
+            f"2) 显式 promote {new_primary}；新 primary 本地写 ack="
+            f"{result.new_primary_write_accepted}。"
+        )
+        print(
+            "3) 分区中两侧状态："
+            f"旧侧 old={old_old_value!r}, new={old_new_value!r}；"
+            f"新侧 old={new_old_value!r}, new={new_new_value!r}。"
+        )
+        print(
+            "4) 愈合后按新 primary 世代全量收敛："
+            f"converged={result.converged_after_heal}, "
+            f"old={result.old_dirty_value_after_heal!r}, "
+            f"new={result.new_dirty_value_after_heal!r}。"
+        )
+        print("结论：协议 1 没有任期 fencing；分区中两侧都可确认本地脏写。")
+    return result
+
+
+def _run_raft_experiment(*, verbose: bool) -> ExperimentResult:
     """Run the minority-old-leader partition and return assertion-friendly facts."""
 
     group = RaftGroup(
@@ -94,4 +208,15 @@ def run_experiment(*, verbose: bool = True) -> ExperimentResult:
 
 
 if __name__ == "__main__":
-    run_experiment()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--protocol",
+        choices=("async", "raft", "both"),
+        default="both",
+    )
+    args = parser.parse_args()
+    protocols = ("async", "raft") if args.protocol == "both" else (args.protocol,)
+    for index, selected_protocol in enumerate(protocols):
+        if index:
+            print()
+        run_experiment(protocol=selected_protocol)

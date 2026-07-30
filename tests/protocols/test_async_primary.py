@@ -73,3 +73,103 @@ def test_manual_promotion_can_lose_acknowledged_write() -> None:
     assert result.accepted
     assert group.client_read(b"paid", ReadLevel.LEADER).value is None
     assert group.probe().primary == "r1"
+
+
+def test_queued_old_primary_full_sync_is_rejected_after_promotion() -> None:
+    group = AsyncPrimaryGroup(
+        replica_ids=("r1", "r2"),
+        backlog_size=1,
+        replication_delay=2,
+    )
+    group.crash("r2")
+    group.client_write(b"first", b"old-history", AckLevel.LEADER)
+    group.client_write(b"second", b"old-history", AckLevel.LEADER)
+    group.run_until_idle()
+
+    group.restart("r2")
+    group.promote("r1")
+    group.run_until_idle()
+
+    rejected = [
+        event
+        for event in group.trace.events
+        if event.kind == "replication_message_rejected"
+        and event.details["message_type"] == "full_sync"
+        and event.details["source_primary"] == "primary"
+    ]
+    assert rejected
+    assert rejected[0].details["reason"] == "non_current_primary"
+    state = group.probe()
+    assert state.nodes["r2"].data == state.nodes["r1"].data
+    assert state.nodes["r2"].replication_id == state.nodes["r1"].replication_id
+
+
+def test_promotion_converges_alive_replicas_without_a_new_write() -> None:
+    group = AsyncPrimaryGroup(replica_ids=("r1", "r2"), replication_delay=1)
+    group.isolate("r2")
+    group.client_write(b"before-promotion", b"present", AckLevel.LEADER)
+    group.run_until_idle()
+    group.heal("r2")
+
+    group.promote("r1")
+    group.run_until_idle()
+
+    state = group.probe()
+    assert state.nodes["r2"].data == state.nodes["r1"].data
+    assert state.nodes["r2"].offset == state.nodes["r1"].offset
+    assert state.nodes["r2"].replication_id == state.nodes["r1"].replication_id
+
+
+def test_queued_old_primary_backlog_entry_is_rejected_after_promotion() -> None:
+    group = AsyncPrimaryGroup(replica_ids=("r1",), replication_delay=2)
+    group.client_write(b"old-primary", b"dirty", AckLevel.LEADER)
+
+    group.promote("r1")
+    group.run_until_idle()
+
+    rejected = [
+        event
+        for event in group.trace.events
+        if event.kind == "replication_message_rejected"
+        and event.details["message_type"] == "entry"
+    ]
+    assert rejected
+    assert rejected[0].details["reason"] == "non_current_primary"
+
+
+@pytest.mark.parametrize(
+    ("generation", "replication_id", "reason"),
+    [
+        (0, "repl-1", "stale_generation"),
+        (1, "obsolete-lineage", "stale_replication_id"),
+    ],
+)
+def test_current_primary_delivery_requires_current_generation_and_replication_id(
+    generation: int,
+    replication_id: str,
+    reason: str,
+) -> None:
+    group = AsyncPrimaryGroup(replica_ids=("r1",), replication_delay=1)
+    group.network.send(
+        "primary",
+        "r1",
+        {
+            "type": "entry",
+            "mode": "stream",
+            "source_primary": "primary",
+            "generation": generation,
+            "replication_id": replication_id,
+            "offset": 1,
+            "key": b"fenced",
+            "value": b"dirty",
+        },
+    )
+
+    group.run_until_idle()
+
+    assert group.probe().nodes["r1"].data == {}
+    assert any(
+        event.kind == "replication_message_rejected"
+        and event.details["reason"] == reason
+        for event in group.trace.events
+    )

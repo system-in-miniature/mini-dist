@@ -41,6 +41,7 @@ class SyncMode(Enum):
 
 @dataclass(frozen=True, slots=True)
 class _Entry:
+    generation: int
     replication_id: str
     offset: int
     key: bytes
@@ -153,6 +154,7 @@ class AsyncPrimaryGroup:
         primary.offset += 1
         primary.data[key] = value
         entry = _Entry(
+            generation=self._generation,
             replication_id=primary.replication_id,
             offset=primary.offset,
             key=key,
@@ -260,6 +262,28 @@ class AsyncPrimaryGroup:
         if node != self._primary:
             self._synchronize(node)
 
+    def isolate(self, node: NodeId) -> None:
+        """Bidirectionally partition one alive node from every peer."""
+
+        target = self._node(node)
+        self._require_alive(target)
+        for peer in self._nodes:
+            if peer != node:
+                self.network.partition(node, peer, bidirectional=True)
+        self.trace.record(self.clock.now, "protocol_node_isolated", node=node)
+
+    def heal(self, node: NodeId) -> None:
+        """Heal one node's links and resynchronize it when it is a replica."""
+
+        target = self._node(node)
+        self._require_alive(target)
+        for peer in self._nodes:
+            if peer != node:
+                self.network.heal(node, peer, bidirectional=True)
+        self.trace.record(self.clock.now, "protocol_node_healed", node=node)
+        if node != self._primary:
+            self._synchronize(node)
+
     def promote(self, node: NodeId) -> None:
         """Manually make an alive replica the new primary."""
 
@@ -283,6 +307,9 @@ class AsyncPrimaryGroup:
             replication_id=candidate.replication_id,
             offset=candidate.offset,
         )
+        for replica_id, replica in self._nodes.items():
+            if replica_id != self._primary and replica.alive:
+                self._synchronize(replica_id)
 
     def probe(self) -> GroupState:
         """Return value snapshots for assertions without exposing mutability."""
@@ -336,6 +363,8 @@ class AsyncPrimaryGroup:
         replica.sync_mode = SyncMode.FULL
         payload = {
             "type": "full_sync",
+            "source_primary": self._primary,
+            "generation": self._generation,
             "replication_id": primary.replication_id,
             "offset": primary.offset,
             "data": dict(primary.data),
@@ -358,6 +387,8 @@ class AsyncPrimaryGroup:
             {
                 "type": "entry",
                 "mode": mode,
+                "source_primary": source,
+                "generation": entry.generation,
                 "replication_id": entry.replication_id,
                 "offset": entry.offset,
                 "key": entry.key,
@@ -379,12 +410,41 @@ class AsyncPrimaryGroup:
         payload = message.payload
         if not isinstance(payload, dict):
             raise TypeError("protocol payload must be a dict")
+        rejection_reason = self._replication_rejection_reason(message, payload)
+        if rejection_reason is not None:
+            self.trace.record(
+                self.clock.now,
+                "replication_message_rejected",
+                message_id=message.message_id,
+                message_type=payload.get("type"),
+                source_primary=payload.get("source_primary"),
+                generation=payload.get("generation"),
+                replication_id=payload.get("replication_id"),
+                reason=rejection_reason,
+            )
+            return
         if payload["type"] == "full_sync":
             self._apply_full_sync(target, payload)
         elif payload["type"] == "entry":
             self._apply_entry(target, payload)
         else:
             raise ValueError(f"unknown replication message: {payload['type']}")
+
+    def _replication_rejection_reason(
+        self, message: Message, payload: dict[str, Any]
+    ) -> str | None:
+        primary = self._nodes[self._primary]
+        if (
+            message.source != self._primary
+            or payload.get("source_primary") != self._primary
+            or payload.get("source_primary") != message.source
+        ):
+            return "non_current_primary"
+        if payload.get("generation") != self._generation:
+            return "stale_generation"
+        if payload.get("replication_id") != primary.replication_id:
+            return "stale_replication_id"
+        return None
 
     def _apply_entry(self, target: _Node, payload: dict[str, Any]) -> None:
         primary = self._nodes[self._primary]

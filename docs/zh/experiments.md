@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | 1. 正常复制 | **已断言**：primary 在 tick 0 ack；replica 初读为空，复制消息送达后 offset 与值收敛 | _待实现_ | _待实现_ | **已断言**：先选主；写仅在多数派复制后返回 QUORUM ack；leaderCommit 随后传播，三节点状态机与 commit index 收敛 |
 | 2. ack 后杀 leader | **已断言**：不推进 tick 就 crash primary、promote stale replica；新 primary 读不到已 ack 的写 | _待实现_ | _待实现_ | **已断言**：QUORUM ack 后立即 crash leader；持有该日志前缀的多数派选出新 leader，read-index 读取仍为 `confirmed` |
-| 3. 少数派含旧 leader 的网络分区 | 当前协议 1 没有自动选举/任期 fencing；M1 只提供显式 `promote`，因此不伪造同语义自动分区实验 | _待实现_ | _待实现_ | **已断言**：旧 leader 的本地追加不能得到 QUORUM ack；多数派在更高任期选主并继续提交；愈合后旧 leader 降级，其冲突后缀被回退并与新 leader 收敛 |
+| 3. 少数派含旧 leader 的网络分区 | **已断言**：隔离旧 primary，让它确认一条本地脏写，再显式 promote 一个副本；新 primary 也确认另一条本地脏写。分区期间两侧各自只能看到自己的写；愈合后旧节点向新世代执行 full-sync，全部副本收敛到新 primary 历史。另有协议回归测试证明排队的旧世代投递会被拒绝 | _待实现_ | _待实现_ | **已断言**：旧 leader 的本地追加不能得到 QUORUM ack；多数派在更高任期选主并继续提交；愈合后旧 leader 降级，其冲突后缀被回退并与新 leader 收敛 |
 | 4. 慢副本 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
 | 5. 落后副本重连 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
 | 6. 读一致性矩阵 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
@@ -27,7 +27,8 @@ uv run pytest -q tests/labs/test_experiments.py
 ```
 
 三个 lab 只调用复制组公开 API。异步路径使用写、读、`tick`、
-`run_until_idle`、`crash`、`promote` 与 `probe`；Raft 路径使用写、读、
+`run_until_idle`、`crash`、`isolate`、`heal`、`promote` 与 `probe`；
+Raft 路径使用写、读、
 `run_until_leader`、`run_until_converged`、`crash`、`isolate`、`heal`
 与 `probe`。没有直接调用网络、scheduler、RPC handler 或内部投递钩子
 来制造结论。

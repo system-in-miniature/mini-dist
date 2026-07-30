@@ -34,7 +34,7 @@ def test_experiment_2_raft_acknowledged_write_survives_failover() -> None:
 
 
 def test_experiment_3_old_leader_is_fenced_and_cluster_converges() -> None:
-    result = run_partition(verbose=False)
+    result = run_partition(protocol="raft", verbose=False)
     assert not result.old_leader_write_committed
     assert result.new_leader_write_committed
     assert result.new_leader != result.old_leader
@@ -42,3 +42,16 @@ def test_experiment_3_old_leader_is_fenced_and_cluster_converges() -> None:
     assert result.logs_converged
     assert result.majority_value == b"continues"
     assert result.minority_value is None
+
+
+def test_experiment_3_async_primary_exposes_split_brain_dirty_writes() -> None:
+    result = run_partition(protocol="async", verbose=False)
+    assert result.old_primary_write_accepted
+    assert result.new_primary_write_accepted
+    assert result.old_primary_value_during_partition == b"old-primary"
+    assert result.old_primary_new_value_during_partition is None
+    assert result.new_primary_value_during_partition == b"new-primary"
+    assert result.new_primary_old_value_during_partition is None
+    assert result.converged_after_heal
+    assert result.old_dirty_value_after_heal is None
+    assert result.new_dirty_value_after_heal == b"new-primary"
