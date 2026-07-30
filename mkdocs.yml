@@ -1,0 +1,35 @@
+site_name: MiniDist Tutorial
+site_description: A chapter-oriented guide to deterministic replication experiments
+site_url: https://system-in-miniature.github.io/MiniDist/
+repo_url: https://github.com/system-in-miniature/MiniDist
+repo_name: system-in-miniature/MiniDist
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+
+nav:
+  - English:
+      - Chapter 1 · Quick start: index.md
+      - Chapter 2 · Architecture overview: https://github.com/system-in-miniature/MiniDist#repository-layout
+      - Chapter 3 · Mechanisms and real-system mapping: mapping.md
+      - Chapter 4 · Hands-on experiments: labs-guide.md
+      - Chapter 5 · Differences and behavior matrix: experiments.md
+      - Appendix · Project source and scope: https://github.com/system-in-miniature/MiniDist#readme
+  - 中文版:
+      - 第 1 章 · 快速开始: zh/index.md
+      - 第 2 章 · 架构总览: https://github.com/system-in-miniature/MiniDist/blob/main/README.zh-CN.md
+      - 第 3 章 · 机制与真实系统映射: zh/mapping.md
+      - 第 4 章 · 动手实验: zh/labs-guide.md
+      - 第 5 章 · 差异与行为矩阵: zh/experiments.md
+      - 附录 · 项目源码与范围: https://github.com/system-in-miniature/MiniDist/blob/main/README.zh-CN.md
