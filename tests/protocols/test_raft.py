@@ -139,3 +139,28 @@ def _election_partition_heal_trace(seed: int) -> list[dict[str, object]]:
 def test_same_seed_replays_election_and_partition_heal_exactly() -> None:
     assert _election_partition_heal_trace(37) == _election_partition_heal_trace(37)
 
+
+def test_local_read_can_observe_a_lagging_raft_follower() -> None:
+    group = elected_group(seed=43)
+    state = group.probe()
+    follower = next(node for node in state.nodes if node != state.leader)
+    group.isolate(follower)
+    group.client_write(b"k", b"v", AckLevel.QUORUM)
+
+    result = group.client_read(b"k", ReadLevel.LOCAL, node=follower)
+
+    assert result.value is None
+    assert result.node == follower
+
+
+def test_quorum_ack_survives_explicit_unfsynced_loss_injection() -> None:
+    group = elected_group(seed=47)
+    old_leader = group.probe().leader
+    result = group.client_write(b"stable", b"raft", AckLevel.QUORUM)
+
+    group.crash(old_leader, lose_unfsynced=True)
+    new_leader = group.run_until_leader(exclude=old_leader)
+
+    assert result.accepted
+    assert group.client_read(b"stable", ReadLevel.LINEARIZABLE).value == b"raft"
+    assert group.probe().nodes[new_leader].durable_index >= result.offset

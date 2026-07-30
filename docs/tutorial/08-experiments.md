@@ -354,3 +354,7 @@ levels add a second axis: routing to a leader is not the same as proving
 current majority authority. Together, the labs show why distributed-system
 APIs must name their actual guarantees instead of flattening unlike mechanisms
 behind one successful return value.
+
+## M3 protocol update
+
+Protocols 2/3 have been added; see the comparison table in `docs/experiments.md`.

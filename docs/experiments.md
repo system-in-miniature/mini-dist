@@ -2,44 +2,53 @@
 
 # Replication Protocol Experiment Matrix
 
-A `tick` is a logical time step, not wall-clock time or a performance number.
-The conclusions for protocols 1 and 4 come from this repository's labs +
-pytest; protocols 2/3 remain placeholders for later milestones.
+A `tick` is a deterministic ordering step, not wall-clock time. Every filled
+cell below is backed by a protocol pytest or a public-API lab assertion.
 
-| Experiment | Protocol 1: asynchronous primary-replica | Protocol 2: WAL transport | Protocol 3: ISR + HW | Protocol 4: Raft |
+| Experiment | Protocol 1: asynchronous primary-replica | Protocol 2: WAL shipping | Protocol 3: ISR + HW | Protocol 4: Raft |
 |---|---|---|---|---|
-| 1. Normal replication | **Asserted**: the primary acks at tick 0; the replica's initial read is empty, and its offset and value converge after the replication message is delivered | _Not implemented_ | _Not implemented_ | **Asserted**: elect a leader first; the write returns a QUORUM ack only after majority replication; leaderCommit then propagates, and the three-node state machines and commit indexes converge |
-| 2. Kill the leader after ack | **Asserted**: crash the primary without advancing a tick, then promote a stale replica; the new primary cannot read the acknowledged write | _Not implemented_ | _Not implemented_ | **Asserted**: crash the leader immediately after the QUORUM ack; the majority that holds the log prefix elects a new leader, and a read-index read still returns `confirmed` |
-| 3. Network partition containing the old leader in the minority | **Asserted**: isolate the old primary, let it acknowledge a local dirty write, then explicitly promote a replica; the new primary also acknowledges a different local dirty write. During the partition each side sees only its own write; after healing, the old node full-syncs to the new generation and all replicas converge to the new primary's history. Separate protocol regressions prove that queued old-generation delivery is rejected | _Not implemented_ | _Not implemented_ | **Asserted**: the old leader's local append cannot receive a QUORUM ack; the majority elects a leader in a higher term and continues committing; after healing, the old leader steps down, its conflicting suffix is rolled back, and it converges with the new leader |
-| 4. Slow replica | _Future experiment_ | _Not implemented_ | _Not implemented_ | _Not implemented_ |
-| 5. Lagging replica reconnects | _Future experiment_ | _Not implemented_ | _Not implemented_ | _Not implemented_ |
-| 6. Read-consistency matrix | _Future experiment_ | _Not implemented_ | _Not implemented_ | _Not implemented_ |
-| 7. Split-brain read | _Future experiment_ | _Not implemented_ | _Not implemented_ | _Not implemented_ |
+| 1. Normal replication | `LEADER` returns before the replica applies; the replica converges after stream delivery. | `LEADER` returns after local WAL flush but before an asynchronous standby applies the ordered WAL bytes; `QUORUM` waits for every configured synchronous standby to flush. | `LEADER` may expose a follower gap; `ALL_ISR` returns only after every current ISR member has the offset and HW reaches it. | `QUORUM` returns after majority replication; commit propagation then converges every live state machine. |
+| 2. Kill leader after ack | An immediate promotion of a stale replica loses the acknowledged write. | Async (`LEADER`) commit may be absent from the promoted standby; sync (`QUORUM`) commit is present on every configured synchronous promotion candidate. | An `ALL_ISR` write is below HW on all ISR members, so a clean controller election preserves it. | A QUORUM-committed prefix survives and is read after the majority elects a new leader. |
+| 3. Old leader in minority | Both manually designated primaries can accept local dirty writes; the new generation wins on heal. | Promotion increments timeline; queued WAL from the old timeline is rejected before apply and the standby follows the new branch. | The controller increments leader epoch; old-epoch appends are fenced and clean election starts from HW. | The old leader cannot commit; a higher-term majority leader overwrites the uncommitted suffix after heal. |
+| 4. Slow replica | The primary remains available because the replica is not a voter; the slow replica is stale. | With an asynchronous standby, local commit remains available; a configured synchronous standby would gate `QUORUM`. | Controller removes the lagging follower from ISR; writes continue while the remaining ISR still satisfies `min.insync.replicas`. | Membership stays fixed, but one slow follower does not prevent a three-node majority from committing. |
+| 5. Lagging replica reconnects | Within backlog: partial/incremental resync. Outside backlog or wrong lineage: full snapshot replacement. | Within retained WAL: incremental record shipping. Before the oldest retained LSN or on a new timeline: base backup/full catch-up. | Within retained leader log: incremental fetch. Before the retained start: full snapshot catch-up; rejoin ISR only after reaching HW. | The unbounded M3 log always repairs through `nextIndex` fallback and incremental log replay; snapshot/full transfer is v2. |
+| 6. Read-consistency matrix | `LOCAL`: stale on a lagging replica. `LEADER`: fresh but no authority proof. `LINEARIZABLE`: unsupported. | `LOCAL`: stale on a lagging standby. `LEADER`: fresh but no lease proof. `LINEARIZABLE`: unsupported. | `LOCAL`: stale. `LEADER`: may expose an uncommitted leader append. `LINEARIZABLE`: blocked until HW/lease/min.insync prove authority, then fresh. | `LOCAL`: stale on a lagging follower. `LEADER`: fresh but may be a partitioned old leader. `LINEARIZABLE`: fresh after a current-term read-index quorum. |
+| 7. Split-brain read and lease | Old primary `LOCAL` returns the pre-promotion value; no linearizable/lease guard is offered. | Old timeline primary `LOCAL` returns the pre-promotion value; timeline fences writes, not standalone stale reads, and no lease read is offered. | Old leader `LOCAL` is stale; controller ownership plus the logical leader lease rejects the displaced leader. | Old leader `LOCAL` is stale; the current leader's read-index succeeds, while a partitioned old leader cannot obtain a quorum barrier. |
+
+## Read-Level Result Matrix
+
+Experiment 6 records status rather than flattening all failures into “not
+stale”:
+
+| Protocol | LOCAL | LEADER | LINEARIZABLE |
+|---|---|---|---|
+| Async primary | stale | fresh | unsupported |
+| WAL shipping | stale | fresh | unsupported |
+| ISR + HW | stale | fresh but uncommitted | blocked without HW lease |
+| Raft | stale | fresh | fresh after read-index |
 
 ## How to Run
 
 ```bash
-uv run python labs/exp01_normal_replication.py
-uv run python labs/exp01_normal_replication.py --protocol raft
-uv run python labs/exp02_acked_write_loss.py
-uv run python labs/exp02_acked_write_loss.py --protocol raft
-uv run python labs/exp03_partition_old_leader.py
+uv run python labs/exp04_slow_replica.py
+uv run python labs/exp05_replica_reconnect.py
+uv run python labs/exp06_read_consistency.py
+uv run python labs/exp07_split_brain_lease.py
 uv run pytest -q tests/labs/test_experiments.py
 ```
 
-The three labs call only the replication group's public APIs. The asynchronous
-path uses write, read, `tick`, `run_until_idle`, `crash`, `isolate`, `heal`,
-`promote`, and `probe`;
-the Raft path uses write, read, `run_until_leader`, `run_until_converged`,
-`crash`, `isolate`, `heal`, and `probe`. They do not directly call the network,
-scheduler, RPC handlers, or internal delivery hooks to manufacture their
-conclusions.
+Experiments 4, 5, and 7 accept `--protocol async|wal|isr|raft|all`. The default
+prints all four columns. Experiment 6 always prints the complete 3 × 4 matrix.
+The scripts call only replication-group public APIs; they do not invoke RPC
+handlers or mutate scheduler/network internals.
 
-## Determinism Boundary
+## Determinism and Durability Boundaries
 
-Raft's network choices and election timeouts are derived only from the `seed`
-injected through the constructor. The replay test performs one initial election,
-one partition of the old leader, one majority-side primary change, and one
-healing convergence, then asserts that the complete `Trace.as_dicts()` from two
-runs with the same seed are identical item by item. Logical ticks, message IDs,
-timeout samples, and state-transition order are all part of the replay contract.
+Both new protocols have same-seed, event-for-event trace replay tests. The
+explicit `lose_unfsynced=True` crash is a power-loss injection: it rolls a node
+back to its last simulated fsync. Ordinary `crash(node)` retains accepted
+persistent state. Raft persists term/vote/log changes before dependent RPC
+responses; WAL `LEADER` flushes the primary, WAL `QUORUM` also flushes every
+synchronous standby; Kafka-style replication exposes page-cache-like unfsynced
+copies but protects `ALL_ISR` through multiple replicas; the asynchronous
+primary can acknowledge an unfsynced local dataset.

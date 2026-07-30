@@ -28,15 +28,53 @@ Label meanings:
 | Reject `AckLevel.QUORUM` / `ALL_ISR` | Redis `WAIT` can wait for replica acks, but it still does not turn Redis into a strongly consistent quorum log | **Intentionally simplified** | The current protocol models only the default asynchronous write path; it does not quietly treat `WAIT` as a Raft commit. |
 | Reject `ReadLevel.LINEARIZABLE` | Redis replica reads may be stale by default, and failover provides no read-index-style proof | **Equivalent** | `LOCAL` may read an old value; `LEADER` only routes and makes no claim of consensus linearizability. |
 
-## DIFFERENCES List
+## Protocol 1 DIFFERENCES List
 
 This milestone does not implement Redis Sentinel, Cluster, `WAIT`, RDB/AOF
-policies, disk fsync loss windows, or real RESP transport. Their support cannot
-be inferred from the current tests passing. The provable conclusions for
-protocol 1 are limited to asynchronous acks, the replica sink,
-offset/backlog-based resynchronization, fenced full replacement, and manual
-primary change. MiniDist therefore does not claim the original M1/M2 plan as
-complete: disk-fsync loss-window injection remains a planned M3 capability.
+policies, or real RESP transport. The M3 persistence boundary is an in-process
+fsync image, not those production persistence modes.
+
+# Mapping Protocol 2 to PostgreSQL WAL Shipping
+
+| MiniDist WAL mechanism | PostgreSQL counterpart | Classification | Boundary notes |
+|---|---|---|---|
+| Ordered logical SET bytes with monotonic LSNs | Ordered WAL bytes identified by LSN | **Intentionally simplified** | Real PostgreSQL WAL is physical; logical SET keeps the shared KV state machine while preserving byte transport and order. |
+| `LEADER` flushes primary WAL and returns before asynchronous standby apply | Local commit with asynchronous streaming replication | **Equivalent** | A promoted async standby can lack the acknowledged suffix. |
+| `QUORUM` waits for every configured synchronous standby to flush | `synchronous_commit` plus configured synchronous standbys | **Intentionally simplified** | Here `QUORUM` means all configured sync standbys, not a numeric majority or the complete `ANY/FIRST` grammar. |
+| Standbys decode/apply strictly in LSN order | WAL receiver/replay follows one ordered stream | **Equivalent** | A gap triggers catch-up instead of applying over an unknown prefix. |
+| Retained WAL enables incremental catch-up; an older position triggers a base backup | WAL retention/archive slots versus a new base backup | **Equivalent** | Archive retrieval and transfer cost are omitted; snapshot replacement is one event. |
+| Promotion increments timeline and rejects queued old-timeline WAL | Timeline history protects recovery branches after promotion | **Equivalent** | History files and common-ancestor search are simplified to an integer branch fence. |
+| `LOCAL` may be stale; `LINEARIZABLE` is rejected | Hot-standby replay can lag; synchronous commit is not a read lease | **Equivalent** | Write durability is not silently presented as read authority. |
+
+## Protocol 2 DIFFERENCES List
+
+- **Intentionally simplified:** logical KV WAL, fixed synchronous standby tuple,
+  atomic base backup, and no transactions/checkpoints/archive restore.
+- **Equivalent branch safety:** old-timeline records are rejected before apply.
+- **Semantically opposite if generalized:** `QUORUM` here is all configured
+  synchronous standbys, not a Raft majority.
+
+# Mapping Protocol 3 to Kafka ISR Replication
+
+| MiniDist ISR mechanism | Kafka counterpart | Classification | Boundary notes |
+|---|---|---|---|
+| In-process controller owns leader, leader epoch, and ISR | Kafka controller/metadata quorum decides partition leadership and ISR | **Intentionally simplified** | Controller availability and metadata replication are outside this data-plane model. |
+| Lag timeout removes a follower; reaching HW permits rejoin | ISR shrink/expand from replica lag and catch-up | **Equivalent** | Logical ticks replace wall-clock lag/fetch timing. |
+| HW is the minimum log-end offset in current ISR | Kafka partition high watermark | **Equivalent** | Committed reads expose only entries at or below HW. |
+| `ALL_ISR` waits for current ISR and enforces `min.insync.replicas` | Producer `acks=all` with `min.insync.replicas` | **Equivalent** | Dynamic ISR is not a Raft majority. |
+| `LEADER` returns without waiting for ISR/HW | Kafka `acks=1` | **Equivalent** | A leader read may expose data above HW. |
+| Controller election increments leader epoch; old-epoch packets are rejected | Leader-epoch fencing and log truncation | **Equivalent** | Producer and transactional epochs are separate and omitted. |
+| Retained log uses incremental catch-up; outside retention uses a full snapshot | Segment retention and replica bootstrap | **Intentionally simplified** | Kafka transfers log segments rather than atomically replacing a KV snapshot. |
+| Logical leader lease gates the authority-read lab | Controller ownership plus a pedagogical lease | **Intentionally simplified** | Kafka does not expose MiniDist's `lease_read`; it isolates the stale-old-leader mechanism. |
+
+## Protocol 3 DIFFERENCES List
+
+- **Intentionally simplified:** always-available in-process controller, one
+  record per write, and no batches, idempotence, transactions, or segment files.
+- **Equivalent:** ISR shrink/rejoin, HW, min.insync, ALL_ISR, and leader-epoch
+  rejection preserve their fault semantics.
+- **Semantically opposite if generalized:** `ALL_ISR` is dynamic and may cover
+  fewer nodes than a majority of the configured assignment.
 
 # Mapping Protocol 4 to the Raft Paper
 
@@ -55,7 +93,7 @@ shared-memory state updates as RPCs.
 | Majority replication advances commitIndex | §5.3 | **Equivalent** | An entry can be committed only when `matchIndex` covers a majority; QUORUM is the only supported write ack. |
 | Advance commitIndex by replica count only for “entries from the current term” | §5.4.2 | **Equivalent** | The code's why-comment directly cites the counterexample in this section: an old-term entry cannot be committed directly merely because it is currently stored on a majority; it is committed indirectly as part of the committed prefix of a current-term entry. |
 | The leader appends a no-op after election | §8 | **Intentionally simplified** | The no-op provides a committable point in the current term and safely commits earlier prefixes after recovery or a primary change; it does not alter the KV state. Client-session handling from §8 is omitted. |
-| `currentTerm`, `votedFor`, and the log are persistent; other state is volatile | §5 / Figure 2 | **Intentionally simplified** | A crash preserves these three fields in an in-process durable mapping; restart rebuilds the node as a follower with commitIndex=0 and an empty state machine, then replays the committed prefix from leaderCommit. No disk/fsync behavior is claimed. |
+| `currentTerm`, `votedFor`, and the log are persistent; other state is volatile | §5 / Figure 2 | **Intentionally simplified** | A crash preserves these fields at the simulated stable-storage boundary; restart rebuilds volatile state and replays the committed prefix from leaderCommit. |
 | Direct `LEADER` read | Client-interaction background in §8 | **Semantically opposite** | This only routes to the currently known leader with the highest term and does not prove that the leader still controls a majority. It deliberately does not provide the linearizable-read guarantee a caller might infer from “leader read.” |
 | Simplified read-index barrier for `LINEARIZABLE` reads | Read-only request rules in §8 | **Intentionally simplified** | The leader sends empty AppendEntries in the current term and reads the applied state machine after receiving successful responses from a majority; the read command is not written to the log, and lease/batching/apply-wait machinery is omitted. |
 
@@ -79,13 +117,13 @@ shared-memory state updates as RPCs.
 - **Intentionally simplified: read-index is a single-round heartbeat barrier.**
   It verifies that a majority is reachable in the current term, but does not
   implement lease reads, batched read-index, or cross-thread apply waits.
-- **Equivalent semantics without disk simulation: persistent fields use an
-  in-process durable mapping.** Crash/restart semantics match Figure 2, but
-  there is no fsync latency, torn write, or real file.
+- **Equivalent stable-storage ordering without files:** persistent fields reach
+  the simulated fsync boundary before dependent Raft responses. There is no
+  fsync latency, torn write, checksum, or real file.
 - **Educational observability extensions.** `probe()`, `isolate()`, `heal()`,
   `run_until_leader()`, and `run_until_converged()` are experiment harness APIs,
   not parts of the Raft wire protocol.
 
-This implementation does not support `AckLevel.NONE`, `LEADER`, `ALL_ISR`, or
-`ReadLevel.LOCAL`; these combinations explicitly raise
-`UnsupportedLevelError` instead of silently weakening the guarantee.
+This implementation does not support `AckLevel.NONE`, `LEADER`, or `ALL_ISR`.
+`ReadLevel.LOCAL` exists specifically for stale-read experiments and makes no
+authority claim; `LINEARIZABLE` remains the read-index-protected path.

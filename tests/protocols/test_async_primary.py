@@ -173,3 +173,17 @@ def test_current_primary_delivery_requires_current_generation_and_replication_id
         and event.details["reason"] == reason
         for event in group.trace.events
     )
+
+
+def test_power_loss_discards_acked_but_unfsynced_primary_state() -> None:
+    group = AsyncPrimaryGroup(replica_ids=("r1",), replication_delay=2)
+    group.client_write(b"durable", b"yes", AckLevel.LEADER)
+    group.fsync("primary")
+    group.client_write(b"window", b"lost", AckLevel.LEADER)
+
+    group.crash("primary", lose_unfsynced=True)
+    group.restart("primary")
+
+    assert group.client_read(b"durable", ReadLevel.LEADER).value == b"yes"
+    assert group.client_read(b"window", ReadLevel.LEADER).value is None
+    assert group.probe().nodes["primary"].durable_offset == 1

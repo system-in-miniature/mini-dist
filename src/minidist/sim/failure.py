@@ -38,21 +38,57 @@ class FailureInjector:
         self.clock = clock
         self.trace = trace
         self._nodes: dict[str, SimNode] = {}
+        self._durable: dict[str, dict[str, Any]] = {}
 
     def register(self, node: SimNode) -> None:
         if node.node_id in self._nodes:
             raise ValueError(f"node already registered: {node.node_id}")
         self._nodes[node.node_id] = node
+        self._durable[node.node_id] = dict(node.persistent)
 
-    def crash(self, node_id: str) -> None:
+    def stage_persistent(self, node_id: str, key: str, value: Any) -> None:
+        """Expose a write that the process has accepted but not fsynced."""
+
+        node = self._node(node_id)
+        if not node.alive:
+            raise RuntimeError(f"node is crashed: {node_id}")
+        node.persistent[key] = value
+        self.trace.record(
+            self.clock.now,
+            "persistent_write_staged",
+            node=node_id,
+            key=key,
+        )
+
+    def fsync(self, node_id: str) -> None:
+        """Advance the simulated disk boundary to the node's current state."""
+
+        node = self._node(node_id)
+        if not node.alive:
+            raise RuntimeError(f"node is crashed: {node_id}")
+        self._durable[node_id] = dict(node.persistent)
+        self.trace.record(self.clock.now, "node_fsynced", node=node_id)
+
+    def crash(self, node_id: str, *, lose_unfsynced: bool = False) -> None:
         node = self._node(node_id)
         if not node.alive:
             raise ValueError(f"node already crashed: {node_id}")
+        if lose_unfsynced:
+            # A power-loss fault restores the last complete fsync image.  It is
+            # explicit because an ordinary process crash does not imply that
+            # the kernel forgot acknowledged page-cache writes.
+            node.persistent.clear()
+            node.persistent.update(self._durable[node_id])
         # Clear volatile data before publishing the down state so observers can
         # never see a crashed node that still owns in-flight process memory.
         node.on_crash()
         node.alive = False
-        self.trace.record(self.clock.now, "node_crashed", node=node_id)
+        self.trace.record(
+            self.clock.now,
+            "node_crashed",
+            node=node_id,
+            lost_unfsynced=lose_unfsynced,
+        )
 
     def restart(self, node_id: str) -> None:
         node = self._node(node_id)

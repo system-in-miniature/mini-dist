@@ -310,3 +310,7 @@ uv run pytest -q tests/protocols/test_async_primary.py \
 之后会被栅栏并修复。读 level 又增加一条轴：路由到 leader 不等于证明当前多数
 权威。总的来说，这些 lab 说明分布式系统 API 必须命名真实保证，不能用同一个
 成功返回值抹平不同机制。
+
+## M3 协议更新
+
+协议 2/3 已加入，对照表见 `docs/experiments.md`。

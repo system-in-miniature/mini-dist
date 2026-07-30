@@ -1,6 +1,10 @@
 from labs.exp01_normal_replication import run_experiment as run_normal
 from labs.exp02_acked_write_loss import run_experiment as run_loss
 from labs.exp03_partition_old_leader import run_experiment as run_partition
+from labs.exp04_slow_replica import run_experiment as run_slow
+from labs.exp05_replica_reconnect import run_experiment as run_reconnect
+from labs.exp06_read_consistency import run_experiment as run_reads
+from labs.exp07_split_brain_lease import run_experiment as run_split_read
 
 
 def test_experiment_1_observes_delayed_convergence() -> None:
@@ -55,3 +59,66 @@ def test_experiment_3_async_primary_exposes_split_brain_dirty_writes() -> None:
     assert result.converged_after_heal
     assert result.old_dirty_value_after_heal is None
     assert result.new_dirty_value_after_heal == b"new-primary"
+
+
+def test_experiment_4_distinguishes_isr_shrink_from_raft_majority() -> None:
+    isr = run_slow(protocol="isr", verbose=False)
+    raft = run_slow(protocol="raft", verbose=False)
+
+    assert isr.write_available
+    assert isr.slow_replica_stale
+    assert isr.membership_effect == "removed from ISR"
+    assert raft.write_available
+    assert raft.slow_replica_stale
+    assert raft.membership_effect == "fixed voter; majority unaffected"
+
+
+def test_experiment_4_has_all_four_protocol_columns() -> None:
+    results = {
+        protocol: run_slow(protocol=protocol, verbose=False)
+        for protocol in ("async", "wal", "isr", "raft")
+    }
+    assert all(result.write_available for result in results.values())
+    assert results["wal"].membership_effect == "async standby does not gate commit"
+
+
+def test_experiment_5_catchup_trigger_matrix_covers_all_protocols() -> None:
+    results = {
+        protocol: run_reconnect(protocol=protocol, verbose=False)
+        for protocol in ("async", "wal", "isr", "raft")
+    }
+
+    assert results["async"].inside_window == "incremental"
+    assert results["async"].outside_window == "full"
+    assert results["wal"].inside_window == "incremental"
+    assert results["wal"].outside_window == "full"
+    assert results["isr"].inside_window == "incremental"
+    assert results["isr"].outside_window == "full"
+    assert results["raft"].inside_window == "log replay"
+    assert results["raft"].outside_window == "log replay"
+
+
+def test_experiment_6_read_level_matrix_names_stale_and_authority_failures() -> None:
+    matrix = run_reads(verbose=False)
+
+    for protocol in ("async", "wal", "isr", "raft"):
+        assert matrix[protocol]["LOCAL"].status == "stale"
+        assert matrix[protocol]["LEADER"].status == "fresh"
+    assert matrix["async"]["LINEARIZABLE"].status == "unsupported"
+    assert matrix["wal"]["LINEARIZABLE"].status == "unsupported"
+    assert matrix["isr"]["LINEARIZABLE"].status == "blocked"
+    assert matrix["raft"]["LINEARIZABLE"].status == "fresh"
+
+
+def test_experiment_7_split_brain_local_read_and_authority_guard() -> None:
+    results = {
+        protocol: run_split_read(protocol=protocol, verbose=False)
+        for protocol in ("async", "wal", "isr", "raft")
+    }
+
+    assert all(result.old_side_local_value == b"before" for result in results.values())
+    assert all(result.current_value == b"after" for result in results.values())
+    assert results["async"].guard == "unsupported"
+    assert results["wal"].guard == "unsupported"
+    assert results["isr"].guard == "lease fenced"
+    assert results["raft"].guard == "read-index fenced"

@@ -123,3 +123,21 @@ def test_crash_restart_clears_volatile_and_keeps_persistent_state() -> None:
     failures.restart("n1")
     assert node.alive
     assert node.persistent == {"offset": 4}
+
+
+def test_explicit_fsync_loss_crash_discards_only_unflushed_updates() -> None:
+    trace = Trace()
+    clock = SimClock()
+    node = SimNode(node_id="n1", persistent={"offset": 4})
+    failures = FailureInjector(clock=clock, trace=trace)
+    failures.register(node)
+
+    failures.stage_persistent("n1", "offset", 5)
+    failures.fsync("n1")
+    failures.stage_persistent("n1", "offset", 6)
+    assert node.persistent == {"offset": 6}
+
+    failures.crash("n1", lose_unfsynced=True)
+
+    assert node.persistent == {"offset": 5}
+    assert trace.events[-1].details["lost_unfsynced"] is True

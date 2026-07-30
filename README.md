@@ -7,9 +7,9 @@
 MiniDist is the sixth educational project in the System-in-Miniature series. It
 compares families of distributed replication protocols in the same deterministic
 simulation environment instead of packaging any single protocol as a production
-library. The current milestone delivers the simulation foundation plus two ends of the
-protocol spectrum: protocol 1 (Redis-style asynchronous primary-replica
-replication) and protocol 4 (textbook Raft), compared head-to-head in the labs.
+library. M3 completes the four-protocol spectrum: Redis-style asynchronous
+primary-replica, PostgreSQL-style WAL shipping, Kafka-style ISR + HW, and
+textbook Raft, compared under the same seven experiments.
 
 ## Why This Is Not the 101st mini-Raft
 
@@ -31,12 +31,10 @@ The project therefore uses:
 - an entirely in-process simulation, so real networks, performance numbers, and
   production reliability are not mixed into the educational conclusions.
 
-The currently delivered slice includes protocol 1 (async primary-backup),
-protocol 4 (Raft), and deterministic message/network/lifecycle faults. The
-original M1/M2 plan is only partially delivered: its disk-fsync loss window is
-not implemented and remains an explicit M3 item. Protocol 2 (Postgres-style WAL
-shipping) and protocol 3 (Kafka-style ISR + HW) are also planned for M3 and are
-not yet implemented.
+**M3 is complete.** All four protocols implement the shared replication-group
+surface, experiments 1–7 have a four-column evidence matrix, and the failure
+injector exposes an explicit acknowledged-but-unfsynced power-loss window.
+Same-seed replay covers both new protocols.
 
 ## Quick Start
 
@@ -48,6 +46,10 @@ uv run pytest -q
 uv run python labs/exp01_normal_replication.py
 uv run python labs/exp02_acked_write_loss.py
 uv run python labs/exp03_partition_old_leader.py
+uv run python labs/exp04_slow_replica.py
+uv run python labs/exp05_replica_reconnect.py
+uv run python labs/exp06_read_consistency.py
+uv run python labs/exp07_split_brain_lease.py
 ```
 
 Experiment 2 first receives a successful ack, then crashes the primary before
@@ -66,11 +68,13 @@ src/minidist/
 └── protocols/
     ├── types.py                 # shared experiment vocabulary (ReplicationGroup)
     ├── async_primary/           # replica sink, offset, backlog, manual promote
+    ├── wal_shipping/            # logical WAL bytes, sync standbys, timeline
+    ├── isr/                     # controller, ISR, HW, min.insync, leader epoch
     └── raft/                    # term election, log replication, commit rule, crash recovery
-labs/                            # runnable experiments 1/2/3
+labs/                            # runnable experiments 1–7
 tests/                           # simulation, protocol, and experiment assertions
 docs/mapping.md                  # protocol mechanisms ↔ real-system counterparts
-docs/experiments.md              # cross-protocol experiment matrix (protocols 1 and 4)
+docs/experiments.md              # four-protocol × seven-experiment matrix
 ```
 
 ## Determinism Boundary

@@ -1,41 +1,50 @@
-> **Language**: [English](../experiments.md) | 简体中文
+> **语言**：[English](../experiments.md) | 简体中文
 
 # 复制协议实验矩阵
 
-`tick` 是逻辑时间步，不是墙上时钟或性能数字。协议 1 与协议 4 的结论
-来自本仓库 lab + pytest；协议 2/3 仍是后续里程碑占位。
+`tick` 是确定性的事件排序步，不是墙上时钟。下表每个单元格都有协议 pytest
+或只调用公开 API 的 lab 断言支撑。
 
 | 实验 | 协议 1：异步主从 | 协议 2：WAL 运输 | 协议 3：ISR + HW | 协议 4：Raft |
 |---|---|---|---|---|
-| 1. 正常复制 | **已断言**：primary 在 tick 0 ack；replica 初读为空，复制消息送达后 offset 与值收敛 | _待实现_ | _待实现_ | **已断言**：先选主；写仅在多数派复制后返回 QUORUM ack；leaderCommit 随后传播，三节点状态机与 commit index 收敛 |
-| 2. ack 后杀 leader | **已断言**：不推进 tick 就 crash primary、promote stale replica；新 primary 读不到已 ack 的写 | _待实现_ | _待实现_ | **已断言**：QUORUM ack 后立即 crash leader；持有该日志前缀的多数派选出新 leader，read-index 读取仍为 `confirmed` |
-| 3. 少数派含旧 leader 的网络分区 | **已断言**：隔离旧 primary，让它确认一条本地脏写，再显式 promote 一个副本；新 primary 也确认另一条本地脏写。分区期间两侧各自只能看到自己的写；愈合后旧节点向新世代执行 full-sync，全部副本收敛到新 primary 历史。另有协议回归测试证明排队的旧世代投递会被拒绝 | _待实现_ | _待实现_ | **已断言**：旧 leader 的本地追加不能得到 QUORUM ack；多数派在更高任期选主并继续提交；愈合后旧 leader 降级，其冲突后缀被回退并与新 leader 收敛 |
-| 4. 慢副本 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
-| 5. 落后副本重连 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
-| 6. 读一致性矩阵 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
-| 7. 脑裂读 | _后续实验_ | _待实现_ | _待实现_ | _待实现_ |
+| 1. 正常复制 | `LEADER` 在 replica apply 前返回；流消息送达后收敛。 | `LEADER` 在 primary 本地 WAL flush 后、异步 standby apply 前返回；`QUORUM` 等待全部配置的同步 standby flush。 | `LEADER` 可留下 follower 缺口；`ALL_ISR` 仅在当前 ISR 全部拥有该 offset 且 HW 推进后返回。 | `QUORUM` 在多数派复制后返回；commit 传播后全部存活状态机收敛。 |
+| 2. ack 后杀 leader | 立即 promote stale replica 会丢已确认写。 | 异步 `LEADER` 写可能不在被 promote 的 standby；同步 `QUORUM` 写存在于全部配置的同步候选。 | `ALL_ISR` 写已位于所有 ISR 成员的 HW 以下，controller clean election 后保留。 | QUORUM 已提交前缀存活，多数派选出新 leader 后仍可读。 |
+| 3. 旧 leader 位于少数派 | 两个手工指定 primary 都能确认本地脏写；愈合后新 generation 胜出。 | promote 增加 timeline；旧 timeline 排队 WAL 在 apply 前被拒，standby 跟随新分支。 | controller 增加 leader epoch；旧 epoch append 被栅栏，clean election 从 HW 开始。 | 旧 leader 无法 commit；多数派的更高任期 leader 在愈合后覆盖未提交后缀。 |
+| 4. 慢副本 | primary 不依赖 replica 投票，仍可写；慢 replica stale。 | 异步 standby 不影响本地 commit；若配置为同步 standby，则会阻塞 `QUORUM`。 | controller 将滞后 follower 移出 ISR；剩余 ISR 仍满足 `min.insync.replicas` 时继续写。 | 成员固定，但三节点中一个慢 follower 不影响多数派 commit。 |
+| 5. 落后副本重连 | backlog 内 partial/增量；超出 backlog 或 lineage 不同则全量快照替换。 | retained WAL 内增量运输；早于最老保留 LSN 或新 timeline 时 base backup/全量追赶。 | leader 保留日志内增量 fetch；早于保留起点则全量快照，追到 HW 后才重入 ISR。 | M3 日志不压缩，始终通过 `nextIndex` 回退和增量日志重放修复；snapshot/全量传输属 v2。 |
+| 6. 读一致性矩阵 | `LOCAL`：lagging replica stale。`LEADER`：fresh 但无权威证明。`LINEARIZABLE`：不支持。 | `LOCAL`：lagging standby stale。`LEADER`：fresh 但无 lease 证明。`LINEARIZABLE`：不支持。 | `LOCAL`：stale。`LEADER`：可能暴露未提交 append。`LINEARIZABLE`：直到 HW/lease/min.insync 证明权威才放行并返回 fresh。 | `LOCAL`：lagging follower stale。`LEADER`：fresh 但可能是分区旧 leader。`LINEARIZABLE`：当前任期 read-index 多数派后 fresh。 |
+| 7. 脑裂读与租约 | 旧 primary 的 `LOCAL` 返回 promote 前值；不提供 linearizable/lease guard。 | 旧 timeline primary 的 `LOCAL` 返回 promote 前值；timeline 栅栏写入而非孤立 stale 读，也不提供 lease read。 | 旧 leader `LOCAL` stale；controller 所有权与逻辑 leader lease 拒绝被替换的 leader。 | 旧 leader `LOCAL` stale；当前 leader read-index 成功，分区旧 leader 无法取得 quorum barrier。 |
 
-## 如何运行
+## ReadLevel 结果矩阵
+
+实验 6 区分状态，不把各种失败都包装成“没有 stale”：
+
+| 协议 | LOCAL | LEADER | LINEARIZABLE |
+|---|---|---|---|
+| 异步主从 | stale | fresh | unsupported |
+| WAL 运输 | stale | fresh | unsupported |
+| ISR + HW | stale | fresh 但未提交 | 无 HW lease 时 blocked |
+| Raft | stale | fresh | read-index 后 fresh |
+
+## 运行方法
 
 ```bash
-uv run python labs/exp01_normal_replication.py
-uv run python labs/exp01_normal_replication.py --protocol raft
-uv run python labs/exp02_acked_write_loss.py
-uv run python labs/exp02_acked_write_loss.py --protocol raft
-uv run python labs/exp03_partition_old_leader.py
+uv run python labs/exp04_slow_replica.py
+uv run python labs/exp05_replica_reconnect.py
+uv run python labs/exp06_read_consistency.py
+uv run python labs/exp07_split_brain_lease.py
 uv run pytest -q tests/labs/test_experiments.py
 ```
 
-三个 lab 只调用复制组公开 API。异步路径使用写、读、`tick`、
-`run_until_idle`、`crash`、`isolate`、`heal`、`promote` 与 `probe`；
-Raft 路径使用写、读、
-`run_until_leader`、`run_until_converged`、`crash`、`isolate`、`heal`
-与 `probe`。没有直接调用网络、scheduler、RPC handler 或内部投递钩子
-来制造结论。
+实验 4、5、7 接受 `--protocol async|wal|isr|raft|all`，默认打印四列；实验 6
+总是打印完整 3 × 4 矩阵。脚本只调用 replication group 公开 API，不直接调用
+RPC handler，也不修改 scheduler/network 内部状态。
 
-## 确定性边界
+## 确定性与持久化边界
 
-Raft 的网络选择与选举超时都只从构造函数注入的 `seed` 派生。回放测试
-执行一次初始选举、一次旧 leader 分区、一次多数派换主和一次愈合收敛，
-并断言两次同 seed 运行的完整 `Trace.as_dicts()` 逐项相等。逻辑 tick、
-消息 ID、超时抽样和状态转移顺序都是回放契约的一部分。
+两个新协议都有同 seed、逐事件相同的 Trace 回放测试。显式
+`lose_unfsynced=True` crash 是断电注入：节点回滚到最近一次模拟 fsync；
+普通 `crash(node)` 保留已接受的持久状态。Raft 在依赖其结果的 RPC response
+前持久化 term/vote/log；WAL `LEADER` flush primary，WAL `QUORUM` 还 flush
+全部同步 standby；Kafka 式副本暴露类似 page cache 的未 fsync copy，但
+`ALL_ISR` 依靠多副本保护；异步 primary 可确认尚未 fsync 的本地 dataset。

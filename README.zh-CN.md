@@ -6,8 +6,8 @@
 
 MiniDist 是 System-in-Miniature 系列的第六个教学项目：在同一个确定性
 仿真环境里比较分布式复制协议的谱系，而不是把某一个协议包装成生产库。
-当前里程碑交付了仿真基座和谱系两端：协议 1（Redis 式异步主从复制）与
-协议 4（教科书 Raft），并在 labs 中对照演示。
+M3 已完成四协议谱系：Redis 式异步主从、PostgreSQL 式 WAL 运输、
+Kafka 式 ISR + HW 与教科书 Raft，并在同一套七组实验中对照。
 
 ## 为什么不是第 101 个 mini-Raft
 
@@ -24,10 +24,9 @@ Kafka 用同步副本集合（in-sync replicas, ISR）+ 高水位（high waterma
 - 不强行抹平语义：协议不支持 `QUORUM` 或 `LINEARIZABLE` 时明确报错；
 - 全进程内仿真，不把真实网络、性能数字或生产可靠性混入教学结论。
 
-当前已交付的切片包括协议 1（异步主从）、协议 4（Raft），以及确定性的
-消息、网络和节点生命周期故障。原 M1/M2 计划目前只是部分交付：其中的
-磁盘 fsync 丢失窗口尚未实现，明确留作 M3 项目。协议 2（Postgres 式
-WAL 运输）与协议 3（Kafka 式 ISR + HW）也规划在 M3，尚未实现。
+**M3 已完成。** 四个协议都实现共同 replication-group 接口，实验 1–7
+具有四列证据矩阵；FailureInjector 也提供显式“已 ack 但未 fsync”断电丢失
+窗口。两个新协议均有同 seed Trace 回放测试。
 
 ## 快速开始
 
@@ -39,6 +38,10 @@ uv run pytest -q
 uv run python labs/exp01_normal_replication.py
 uv run python labs/exp02_acked_write_loss.py
 uv run python labs/exp03_partition_old_leader.py
+uv run python labs/exp04_slow_replica.py
+uv run python labs/exp05_replica_reconnect.py
+uv run python labs/exp06_read_consistency.py
+uv run python labs/exp07_split_brain_lease.py
 ```
 
 实验 2 会先得到成功 ack，然后在复制消息送达前 crash primary 并 promote
@@ -55,11 +58,13 @@ src/minidist/
 └── protocols/
     ├── types.py                 # ReplicationGroup 的共同实验词汇
     ├── async_primary/           # replica sink、offset、backlog、手动 promote
+    ├── wal_shipping/            # 逻辑 WAL 字节、同步 standby、timeline
+    ├── isr/                     # controller、ISR、HW、min.insync、leader epoch
     └── raft/                    # 任期选举、日志复制、提交规则、崩溃恢复
-labs/                            # 可直接运行的实验 1/2/3
+labs/                            # 可直接运行的实验 1–7
 tests/                           # 仿真、协议和实验断言
 docs/mapping.md                  # 协议机制 ↔ 真实系统对照
-docs/experiments.md              # 跨协议实验对照表（协议 1 与 4）
+docs/experiments.md              # 四协议 × 七实验对照表
 ```
 
 ## 确定性边界

@@ -88,6 +88,7 @@ class NodeState:
     log: tuple[LogEntry, ...]
     commit_index: int
     last_applied: int
+    durable_index: int
     data: Mapping[bytes, bytes]
 
 
@@ -212,7 +213,15 @@ class RaftGroup:
 
         self._validate_bytes(key, "key")
         if level is ReadLevel.LOCAL:
-            raise UnsupportedLevelError("Raft does not support ReadLevel.LOCAL")
+            selected = self._leader().node_id if node is None else node
+            target = self._node(selected)
+            if not target.alive:
+                raise RuntimeError(f"node is crashed: {selected}")
+            return ReadResult(
+                value=target.data.get(key),
+                node=selected,
+                offset=target.commit_index,
+            )
         if node is not None:
             raise ValueError("Raft leader reads do not accept an explicit node")
         leader = self._leader()
@@ -315,7 +324,26 @@ class RaftGroup:
             self.tick()
         raise RuntimeError("Raft group did not converge")
 
-    def crash(self, node: NodeId) -> None:
+    def fsync(self, node: NodeId) -> None:
+        """Expose Raft's stable-storage boundary for cross-protocol labs.
+
+        Raft persists term/vote/log before the RPC or client-visible action
+        that depends on them, so the in-process representation is already at
+        this boundary when this method is called.
+        """
+
+        target = self._node(node)
+        if not target.alive:
+            raise RuntimeError(f"node is crashed: {node}")
+        self.trace.record(
+            self.clock.now,
+            "raft_node_fsynced",
+            node=node,
+            durable_index=len(target.log) - 1,
+            current_term=target.current_term,
+        )
+
+    def crash(self, node: NodeId, *, lose_unfsynced: bool = False) -> None:
         """Crash a server, preserving only term, vote, and log."""
 
         target = self._node(node)
@@ -329,6 +357,7 @@ class RaftGroup:
             node=node,
             current_term=target.current_term,
             log_length=len(target.log) - 1,
+            lost_unfsynced=lose_unfsynced,
         )
 
     def restart(self, node: NodeId) -> None:
@@ -379,6 +408,7 @@ class RaftGroup:
                 log=tuple(node.log),
                 commit_index=node.commit_index,
                 last_applied=node.last_applied,
+                durable_index=len(node.log) - 1,
                 data=MappingProxyType(dict(node.data)),
             )
             for node_id, node in self._nodes.items()
@@ -863,4 +893,3 @@ class RaftGroup:
     def _validate_bytes(value: bytes, field_name: str) -> None:
         if not isinstance(value, bytes):
             raise TypeError(f"{field_name} must be bytes")
-

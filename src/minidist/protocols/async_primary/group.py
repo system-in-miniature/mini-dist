@@ -57,6 +57,9 @@ class _Node:
     alive: bool = True
     volatile: dict[str, Any] = field(default_factory=dict)
     sync_mode: SyncMode = SyncMode.NEVER
+    durable_data: dict[bytes, bytes] = field(default_factory=dict)
+    durable_offset: int = 0
+    durable_replication_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +73,7 @@ class NodeState:
     offset: int
     data: Mapping[bytes, bytes]
     sync_mode: SyncMode
+    durable_offset: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +124,8 @@ class AsyncPrimaryGroup:
             node_id: _Node(node_id=node_id, replication_id=replication_id)
             for node_id in node_ids
         }
+        for node in self._nodes.values():
+            node.durable_replication_id = replication_id
         self._backlog: deque[_Entry] = deque(maxlen=backlog_size)
         for node_id in node_ids:
             self.network.register(
@@ -234,11 +240,39 @@ class AsyncPrimaryGroup:
 
         return self.scheduler.run_until_idle(max_ticks=max_ticks)
 
-    def crash(self, node: NodeId) -> None:
+    def fsync(self, node: NodeId) -> None:
+        """Persist the node's current dataset and replication position."""
+
+        target = self._node(node)
+        self._require_alive(target)
+        target.durable_data = dict(target.data)
+        target.durable_offset = target.offset
+        target.durable_replication_id = target.replication_id
+        self.trace.record(
+            self.clock.now,
+            "protocol_node_fsynced",
+            node=node,
+            offset=target.offset,
+        )
+
+    def crash(self, node: NodeId, *, lose_unfsynced: bool = False) -> None:
         """Crash a node, clearing process-local state but retaining its dataset."""
 
         target = self._node(node)
         self._require_alive(target)
+        if lose_unfsynced:
+            target.data = dict(target.durable_data)
+            target.offset = target.durable_offset
+            target.replication_id = target.durable_replication_id
+            if node == self._primary:
+                self._backlog = deque(
+                    (
+                        entry
+                        for entry in self._backlog
+                        if entry.offset <= target.durable_offset
+                    ),
+                    maxlen=self._backlog.maxlen,
+                )
         target.volatile.clear()
         target.alive = False
         # A queued packet from the old primary must not be delivered after its
@@ -246,7 +280,12 @@ class AsyncPrimaryGroup:
         for peer in self._nodes:
             if peer != node:
                 self.network.partition(node, peer, bidirectional=True)
-        self.trace.record(self.clock.now, "protocol_node_crashed", node=node)
+        self.trace.record(
+            self.clock.now,
+            "protocol_node_crashed",
+            node=node,
+            lost_unfsynced=lose_unfsynced,
+        )
 
     def restart(self, node: NodeId) -> None:
         """Restart a node and reconnect a replica through Redis-style resync."""
@@ -323,6 +362,7 @@ class AsyncPrimaryGroup:
                 offset=node.offset,
                 data=MappingProxyType(dict(node.data)),
                 sync_mode=node.sync_mode,
+                durable_offset=node.durable_offset,
             )
             for node_id, node in self._nodes.items()
         }
