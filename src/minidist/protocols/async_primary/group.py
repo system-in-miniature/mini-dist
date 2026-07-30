@@ -1,0 +1,453 @@
+"""Redis-style asynchronous primary/replica replication in miniature.
+
+The primary applies a command to its local dict and acknowledges without
+waiting for replicas.  Replicas are sinks: they never vote on a write and only
+consume the primary's ordered stream.  Each stream has a replication ID and
+monotonic offset.  A bounded backlog can fill a small gap; a replica whose
+lineage or offset falls outside that window receives a full snapshot instead.
+
+This is intentionally not Sentinel.  Promotion is a public, manual operation
+so experiments can separate the data-plane weakness (asynchronous loss) from
+the control-plane question (who decides the new primary).
+"""
+
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from types import MappingProxyType
+from typing import Any, Mapping
+
+from minidist.protocols.types import (
+    AckLevel,
+    NodeId,
+    ReadLevel,
+    ReadResult,
+    UnsupportedLevelError,
+    WriteResult,
+)
+from minidist.sim import Message, Scheduler, SimClock, SimNet, Trace
+
+
+class SyncMode(Enum):
+    """Most recent way a replica joined or caught up with its primary."""
+
+    NEVER = auto()
+    STREAMING = auto()
+    PARTIAL = auto()
+    FULL = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class _Entry:
+    replication_id: str
+    offset: int
+    key: bytes
+    value: bytes
+
+
+@dataclass(slots=True)
+class _Node:
+    node_id: NodeId
+    data: dict[bytes, bytes] = field(default_factory=dict)
+    replication_id: str = ""
+    offset: int = 0
+    alive: bool = True
+    volatile: dict[str, Any] = field(default_factory=dict)
+    sync_mode: SyncMode = SyncMode.NEVER
+
+
+@dataclass(frozen=True, slots=True)
+class NodeState:
+    """Read-only experiment snapshot of one node."""
+
+    node_id: NodeId
+    alive: bool
+    role: str
+    replication_id: str
+    offset: int
+    data: Mapping[bytes, bytes]
+    sync_mode: SyncMode
+
+
+@dataclass(frozen=True, slots=True)
+class GroupState:
+    """Read-only experiment snapshot of the whole replication group."""
+
+    tick: int
+    primary: NodeId
+    nodes: Mapping[NodeId, NodeState]
+    backlog_offsets: tuple[int, ...]
+
+
+class AsyncPrimaryGroup:
+    """A deterministic Redis-like asynchronous replication group."""
+
+    def __init__(
+        self,
+        *,
+        primary_id: NodeId = "primary",
+        replica_ids: tuple[NodeId, ...] = ("replica-1", "replica-2"),
+        backlog_size: int = 8,
+        replication_delay: int = 1,
+        seed: int = 0,
+    ) -> None:
+        if backlog_size <= 0:
+            raise ValueError("backlog_size must be positive")
+        if replication_delay <= 0:
+            raise ValueError("replication_delay must be positive")
+        node_ids = (primary_id, *replica_ids)
+        if len(set(node_ids)) != len(node_ids):
+            raise ValueError("node IDs must be unique")
+
+        self.clock = SimClock()
+        self.trace = Trace()
+        self.scheduler = Scheduler(self.clock, self.trace)
+        self.network = SimNet(
+            seed=seed,
+            clock=self.clock,
+            scheduler=self.scheduler,
+            trace=self.trace,
+            min_delay=replication_delay,
+            max_delay=replication_delay,
+        )
+        self._primary = primary_id
+        self._generation = 1
+        replication_id = self._new_replication_id()
+        self._nodes = {
+            node_id: _Node(node_id=node_id, replication_id=replication_id)
+            for node_id in node_ids
+        }
+        self._backlog: deque[_Entry] = deque(maxlen=backlog_size)
+        for node_id in node_ids:
+            self.network.register(
+                node_id,
+                lambda message, target=node_id: self._receive(target, message),
+            )
+        self.trace.record(
+            self.clock.now,
+            "group_created",
+            primary=primary_id,
+            replicas=list(replica_ids),
+            replication_id=replication_id,
+            backlog_size=backlog_size,
+        )
+
+    @property
+    def primary(self) -> NodeId:
+        return self._primary
+
+    def client_write(self, key: bytes, value: bytes, ack: AckLevel) -> WriteResult:
+        """Apply locally, enqueue replica messages, then return the requested ack."""
+
+        if ack not in (AckLevel.NONE, AckLevel.LEADER):
+            raise UnsupportedLevelError(
+                f"async primary does not support AckLevel.{ack.name}"
+            )
+        self._validate_bytes(key, "key")
+        self._validate_bytes(value, "value")
+        primary = self._nodes[self._primary]
+        self._require_alive(primary)
+
+        primary.offset += 1
+        primary.data[key] = value
+        entry = _Entry(
+            replication_id=primary.replication_id,
+            offset=primary.offset,
+            key=key,
+            value=value,
+        )
+        self._backlog.append(entry)
+        self.trace.record(
+            self.clock.now,
+            "primary_applied",
+            node=primary.node_id,
+            replication_id=entry.replication_id,
+            offset=entry.offset,
+            key=key,
+            value=value,
+        )
+        for node_id in self._nodes:
+            if node_id != self._primary:
+                self._send_entry(self._primary, node_id, entry, "stream")
+
+        # The deliberate lesson: neither accepted level waits for a replica.
+        # LEADER means "applied by this primary", not consensus or durability.
+        self.trace.record(
+            self.clock.now,
+            "client_acknowledged",
+            ack_level=ack.name,
+            primary=self._primary,
+            offset=entry.offset,
+        )
+        return WriteResult(
+            accepted=True,
+            offset=entry.offset,
+            message="primary accepted; replica delivery is asynchronous",
+        )
+
+    def client_read(
+        self,
+        key: bytes,
+        level: ReadLevel,
+        node: NodeId | None = None,
+    ) -> ReadResult:
+        """Read locally or force routing to the current primary."""
+
+        if level is ReadLevel.LINEARIZABLE:
+            raise UnsupportedLevelError(
+                "async primary does not support ReadLevel.LINEARIZABLE"
+            )
+        self._validate_bytes(key, "key")
+        if level is ReadLevel.LEADER:
+            selected = self._primary
+        elif level is ReadLevel.LOCAL:
+            selected = self._primary if node is None else node
+        else:  # Defensive if a future enum value is added.
+            raise UnsupportedLevelError(
+                f"async primary does not support ReadLevel.{level.name}"
+            )
+        target = self._node(selected)
+        self._require_alive(target)
+        value = target.data.get(key)
+        self.trace.record(
+            self.clock.now,
+            "client_read",
+            level=level.name,
+            node=selected,
+            key=key,
+            value=value,
+            offset=target.offset,
+        )
+        return ReadResult(value=value, node=selected, offset=target.offset)
+
+    def tick(self) -> None:
+        """Advance one deterministic network/scheduler step."""
+
+        self.scheduler.tick()
+
+    def run_until_idle(self, *, max_ticks: int = 10_000) -> int:
+        """Public convenience used by labs instead of scheduler internals."""
+
+        return self.scheduler.run_until_idle(max_ticks=max_ticks)
+
+    def crash(self, node: NodeId) -> None:
+        """Crash a node, clearing process-local state but retaining its dataset."""
+
+        target = self._node(node)
+        self._require_alive(target)
+        target.volatile.clear()
+        target.alive = False
+        # A queued packet from the old primary must not be delivered after its
+        # crash; turning the lifecycle failure into links also models that cut.
+        for peer in self._nodes:
+            if peer != node:
+                self.network.partition(node, peer, bidirectional=True)
+        self.trace.record(self.clock.now, "protocol_node_crashed", node=node)
+
+    def restart(self, node: NodeId) -> None:
+        """Restart a node and reconnect a replica through Redis-style resync."""
+
+        target = self._node(node)
+        if target.alive:
+            raise ValueError(f"node already running: {node}")
+        target.alive = True
+        for peer in self._nodes:
+            if peer != node:
+                self.network.heal(node, peer, bidirectional=True)
+        self.trace.record(self.clock.now, "protocol_node_restarted", node=node)
+        if node != self._primary:
+            self._synchronize(node)
+
+    def promote(self, node: NodeId) -> None:
+        """Manually make an alive replica the new primary."""
+
+        candidate = self._node(node)
+        self._require_alive(candidate)
+        if node == self._primary:
+            raise ValueError(f"node is already primary: {node}")
+        old_primary = self._primary
+        self._primary = node
+        self._generation += 1
+        candidate.replication_id = self._new_replication_id()
+        candidate.sync_mode = SyncMode.NEVER
+        self._backlog.clear()
+        # Promotion starts a new history.  Clearing the backlog prevents bytes
+        # from the old lineage being advertised as resumable under the new ID.
+        self.trace.record(
+            self.clock.now,
+            "replica_promoted",
+            old_primary=old_primary,
+            new_primary=node,
+            replication_id=candidate.replication_id,
+            offset=candidate.offset,
+        )
+
+    def probe(self) -> GroupState:
+        """Return value snapshots for assertions without exposing mutability."""
+
+        nodes = {
+            node_id: NodeState(
+                node_id=node_id,
+                alive=node.alive,
+                role="primary" if node_id == self._primary else "replica",
+                replication_id=node.replication_id,
+                offset=node.offset,
+                data=MappingProxyType(dict(node.data)),
+                sync_mode=node.sync_mode,
+            )
+            for node_id, node in self._nodes.items()
+        }
+        return GroupState(
+            tick=self.clock.now,
+            primary=self._primary,
+            nodes=MappingProxyType(nodes),
+            backlog_offsets=tuple(entry.offset for entry in self._backlog),
+        )
+
+    def _synchronize(self, replica_id: NodeId) -> None:
+        primary = self._nodes[self._primary]
+        replica = self._nodes[replica_id]
+        self._require_alive(primary)
+        self._require_alive(replica)
+        oldest_offset = self._backlog[0].offset if self._backlog else None
+        can_partial = replica.replication_id == primary.replication_id and (
+            replica.offset == primary.offset
+            or (oldest_offset is not None and replica.offset >= oldest_offset - 1)
+        )
+        if can_partial:
+            replica.sync_mode = SyncMode.PARTIAL
+            missing = [
+                entry for entry in self._backlog if entry.offset > replica.offset
+            ]
+            self.trace.record(
+                self.clock.now,
+                "partial_resync_started",
+                primary=self._primary,
+                replica=replica_id,
+                from_offset=replica.offset,
+                entries=len(missing),
+            )
+            for entry in missing:
+                self._send_entry(self._primary, replica_id, entry, "partial")
+            return
+
+        replica.sync_mode = SyncMode.FULL
+        payload = {
+            "type": "full_sync",
+            "replication_id": primary.replication_id,
+            "offset": primary.offset,
+            "data": dict(primary.data),
+        }
+        self.trace.record(
+            self.clock.now,
+            "full_resync_started",
+            primary=self._primary,
+            replica=replica_id,
+            offset=primary.offset,
+        )
+        self.network.send(self._primary, replica_id, payload)
+
+    def _send_entry(
+        self, source: NodeId, destination: NodeId, entry: _Entry, mode: str
+    ) -> None:
+        self.network.send(
+            source,
+            destination,
+            {
+                "type": "entry",
+                "mode": mode,
+                "replication_id": entry.replication_id,
+                "offset": entry.offset,
+                "key": entry.key,
+                "value": entry.value,
+            },
+        )
+
+    def _receive(self, target_id: NodeId, message: Message) -> None:
+        target = self._nodes[target_id]
+        source = self._nodes.get(message.source)
+        if not target.alive or source is None or not source.alive:
+            self.trace.record(
+                self.clock.now,
+                "protocol_message_ignored",
+                message_id=message.message_id,
+                reason="endpoint_not_alive",
+            )
+            return
+        payload = message.payload
+        if not isinstance(payload, dict):
+            raise TypeError("protocol payload must be a dict")
+        if payload["type"] == "full_sync":
+            self._apply_full_sync(target, payload)
+        elif payload["type"] == "entry":
+            self._apply_entry(target, payload)
+        else:
+            raise ValueError(f"unknown replication message: {payload['type']}")
+
+    def _apply_entry(self, target: _Node, payload: dict[str, Any]) -> None:
+        primary = self._nodes[self._primary]
+        if (
+            payload["replication_id"] != primary.replication_id
+            or payload["replication_id"] != target.replication_id
+            or payload["offset"] != target.offset + 1
+        ):
+            # Redis asks for PSYNC when the stream has a gap or changed ID.  A
+            # replica must not apply later commands over an unknown prefix.
+            self.trace.record(
+                self.clock.now,
+                "replication_gap_detected",
+                replica=target.node_id,
+                replica_offset=target.offset,
+                received_offset=payload["offset"],
+            )
+            self._synchronize(target.node_id)
+            return
+        target.data[payload["key"]] = payload["value"]
+        target.offset = payload["offset"]
+        if payload["mode"] == "stream":
+            target.sync_mode = SyncMode.STREAMING
+        self.trace.record(
+            self.clock.now,
+            "replica_applied",
+            replica=target.node_id,
+            offset=target.offset,
+            mode=payload["mode"],
+            key=payload["key"],
+            value=payload["value"],
+        )
+
+    def _apply_full_sync(self, target: _Node, payload: dict[str, Any]) -> None:
+        # Snapshot replacement is atomic at one simulator event.  Real Redis
+        # transfers and loads an RDB over time; that cost is intentionally out
+        # of scope while the semantic "replace all prior state" remains.
+        target.data = dict(payload["data"])
+        target.replication_id = payload["replication_id"]
+        target.offset = payload["offset"]
+        target.sync_mode = SyncMode.FULL
+        self.trace.record(
+            self.clock.now,
+            "full_resync_applied",
+            replica=target.node_id,
+            offset=target.offset,
+        )
+
+    def _new_replication_id(self) -> str:
+        return f"repl-{self._generation}"
+
+    def _node(self, node_id: NodeId) -> _Node:
+        try:
+            return self._nodes[node_id]
+        except KeyError as error:
+            raise KeyError(f"unknown node: {node_id}") from error
+
+    @staticmethod
+    def _require_alive(node: _Node) -> None:
+        if not node.alive:
+            raise RuntimeError(f"node is crashed: {node.node_id}")
+
+    @staticmethod
+    def _validate_bytes(value: object, name: str) -> None:
+        if not isinstance(value, bytes):
+            raise TypeError(f"{name} must be bytes")

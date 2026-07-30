@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "minidist"
+version = "0.1.0"
+description = "Deterministic distributed replication protocols in miniature"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/minidist"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
