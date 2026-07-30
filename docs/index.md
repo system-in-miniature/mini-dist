@@ -2,40 +2,45 @@
 
 [中文版](zh/index.md)
 
-MiniDist compares replication protocol families inside one deterministic,
-in-process simulation. The current implementation places Redis-style
-asynchronous primary-replica replication beside textbook Raft so that
-acknowledgement, failover, partition, and fencing semantics can be observed
-under the same fault model.
+MiniDist compares replication protocol families in one deterministic,
+in-process laboratory. Read the chapters in order: the first half establishes
+the comparison method, simulator, shared vocabulary, and asynchronous-primary
+mechanism; the second half follows failover fencing into Raft and closes with
+side-by-side experiments.
 
-## Install
+## Chapters
 
-You need Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+1. [Why a Protocol Spectrum?](tutorial/01-why-a-spectrum.md) — why this is not
+   the 101st mini-Raft, and which trade-off questions the spectrum exposes.
+2. [The Deterministic Simulation Foundation](tutorial/02-deterministic-simulation.md)
+   — `SimNet`, `SimClock`, `Scheduler`, `FailureInjector`, and event-for-event
+   `Trace` replay.
+3. [The Replication Group Abstraction](tutorial/03-replication-group.md) —
+   `ReplicationGroup`, acknowledgement/read levels, and explicit refusal of
+   unsupported guarantees.
+4. [Asynchronous Primary–Replica Replication](tutorial/04-async-primary.md) —
+   replica sinks, offsets, bounded backlog, partial resync, and full fallback.
+5. [Failover and Generation Fencing](tutorial/05-failover-fencing.md) —
+   promotion, generation/lineage fences, active convergence, and stale
+   full-sync rejection.
+6. [Raft I: Election](tutorial/06-raft-election.md) — terms, randomized
+   timeouts, voting rules, and election safety.
+7. [Raft II: Log Replication and Commit](tutorial/07-raft-replication.md) —
+   AppendEntries consistency, current-term commit, and crash recovery.
+8. [Comparative Experiment Lab](tutorial/08-experiments.md) — complete
+   interpretation of labs 1–3: acknowledgement loss, split brain versus term
+   fencing, and read consistency.
 
-```bash
-git clone https://github.com/system-in-miniature/MiniDist.git
-cd MiniDist
-uv sync --dev
-```
+## How to use the book
 
-## First experiment
+Run commands from the repository root after `uv sync --dev`. Every pasted
+output is tied to a command and a source path. A simulation tick records event
+ordering, never milliseconds or performance. Exercises that propose code
+changes keep their reference patches inside folded notes; apply them only in a
+scratch branch or temporary copy, never as a prerequisite for later chapters.
 
-```bash
-uv run python labs/exp01_normal_replication.py --protocol async
-uv run python labs/exp01_normal_replication.py --protocol raft
-```
-
-Both runs converge on `b'MiniDist'`, but their acknowledgement boundaries
-differ: the asynchronous primary acknowledges before delivery, while Raft
-acknowledges only after majority replication.
-
-## Reading path
-
-Start with the repository layout in Chapter 2, then read the mechanism mapping.
-Run all three experiments before using the experiment matrix to compare
-supported semantics and explicit non-goals.
-
-See the [English README](https://github.com/system-in-miniature/MiniDist#readme)
-for the full milestone boundary. This repository currently has no
-`docs/superpowers/` design-history archive; the README, mapping, experiment
-matrix, and executable tests are its available sources of truth.
+The [mechanism mapping](mapping.md), [lab guide](labs-guide.md), and
+[behavior/experiment matrix](experiments.md) are reference material. Use the
+matrix as the support boundary: planned rows are not implementation evidence.
+The [project README](https://github.com/system-in-miniature/mini-dist#readme)
+records repository-wide scope and installation requirements.

@@ -7,6 +7,8 @@ docs_dir: docs
 
 theme:
   name: material
+  logo: assets/brand/avatar.svg
+  favicon: assets/brand/avatar.svg
   features:
     - navigation.sections
     - navigation.top
@@ -15,21 +17,43 @@ theme:
 markdown_extensions:
   - admonition
   - attr_list
+  - pymdownx.details
+  - pymdownx.superfences
   - toc:
       permalink: true
 
 nav:
   - English:
-      - Chapter 1 · Quick start: index.md
-      - Chapter 2 · Architecture overview: https://github.com/system-in-miniature/mini-dist#repository-layout
-      - Chapter 3 · Mechanisms and real-system mapping: mapping.md
-      - Chapter 4 · Hands-on experiments: labs-guide.md
-      - Chapter 5 · Differences and behavior matrix: experiments.md
-      - Appendix · Project source and scope: https://github.com/system-in-miniature/mini-dist#readme
+      - Tutorial:
+          - Book contents: index.md
+          - 1 · Why a Protocol Spectrum?: tutorial/01-why-a-spectrum.md
+          - 2 · Deterministic Simulation: tutorial/02-deterministic-simulation.md
+          - 3 · Replication Group: tutorial/03-replication-group.md
+          - 4 · Asynchronous Primary: tutorial/04-async-primary.md
+          - 5 · Failover and Fencing: tutorial/05-failover-fencing.md
+          - 6 · Raft Election: tutorial/06-raft-election.md
+          - 7 · Raft Replication: tutorial/07-raft-replication.md
+          - 8 · Comparative Experiments: tutorial/08-experiments.md
+      - Reference:
+          - Architecture and scope: https://github.com/system-in-miniature/mini-dist#repository-layout
+          - Mechanism mapping: mapping.md
+          - Lab command guide: labs-guide.md
+          - Differences and behavior matrix: experiments.md
+          - Project README: https://github.com/system-in-miniature/mini-dist#readme
   - 中文版:
-      - 第 1 章 · 快速开始: zh/index.md
-      - 第 2 章 · 架构总览: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md
-      - 第 3 章 · 机制与真实系统映射: zh/mapping.md
-      - 第 4 章 · 动手实验: zh/labs-guide.md
-      - 第 5 章 · 差异与行为矩阵: zh/experiments.md
-      - 附录 · 项目源码与范围: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md
+      - 教程:
+          - 全书目录: zh/index.md
+          - 1 · 为什么是协议谱系: zh/tutorial/01-why-a-spectrum.md
+          - 2 · 确定性仿真: zh/tutorial/02-deterministic-simulation.md
+          - 3 · 复制组抽象: zh/tutorial/03-replication-group.md
+          - 4 · 异步主从: zh/tutorial/04-async-primary.md
+          - 5 · 换主与世代栅栏: zh/tutorial/05-failover-fencing.md
+          - 6 · Raft 选举: zh/tutorial/06-raft-election.md
+          - 7 · Raft 日志与提交: zh/tutorial/07-raft-replication.md
+          - 8 · 对照实验课: zh/tutorial/08-experiments.md
+      - 参考资料:
+          - 架构与范围: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md
+          - 机制映射: zh/mapping.md
+          - 实验命令指南: zh/labs-guide.md
+          - 差异与行为矩阵: zh/experiments.md
+          - 项目 README: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md

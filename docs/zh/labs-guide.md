@@ -8,7 +8,7 @@
 ## 实验 1：正常复制
 
 源码：
-[exp01_normal_replication.py](https://github.com/system-in-miniature/MiniDist/blob/main/labs/exp01_normal_replication.py)
+[exp01_normal_replication.py](https://github.com/system-in-miniature/mini-dist/blob/main/labs/exp01_normal_replication.py)
 
 ```bash
 uv run python labs/exp01_normal_replication.py --protocol async
@@ -22,7 +22,7 @@ offset 为 `1`，Raft 的 commit index 为 `2`。更重要的看点是输出中�
 ## 实验 2：已确认写与换主
 
 源码：
-[exp02_acked_write_loss.py](https://github.com/system-in-miniature/MiniDist/blob/main/labs/exp02_acked_write_loss.py)
+[exp02_acked_write_loss.py](https://github.com/system-in-miniature/mini-dist/blob/main/labs/exp02_acked_write_loss.py)
 
 ```bash
 uv run python labs/exp02_acked_write_loss.py --protocol async
@@ -35,7 +35,7 @@ uv run python labs/exp02_acked_write_loss.py --protocol raft
 ## 实验 3：网络分区与旧 leader fencing
 
 源码：
-[exp03_partition_old_leader.py](https://github.com/system-in-miniature/MiniDist/blob/main/labs/exp03_partition_old_leader.py)
+[exp03_partition_old_leader.py](https://github.com/system-in-miniature/mini-dist/blob/main/labs/exp03_partition_old_leader.py)
 
 ```bash
 uv run python labs/exp03_partition_old_leader.py --protocol async

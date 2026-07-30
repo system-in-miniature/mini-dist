@@ -9,7 +9,7 @@ observations are reproducible.
 ## Experiment 1: normal replication
 
 Source:
-[exp01_normal_replication.py](https://github.com/system-in-miniature/MiniDist/blob/main/labs/exp01_normal_replication.py)
+[exp01_normal_replication.py](https://github.com/system-in-miniature/mini-dist/blob/main/labs/exp01_normal_replication.py)
 
 ```bash
 uv run python labs/exp01_normal_replication.py --protocol async
@@ -24,7 +24,7 @@ leader acknowledgement versus majority acknowledgement.
 ## Experiment 2: acknowledged write and failover
 
 Source:
-[exp02_acked_write_loss.py](https://github.com/system-in-miniature/MiniDist/blob/main/labs/exp02_acked_write_loss.py)
+[exp02_acked_write_loss.py](https://github.com/system-in-miniature/mini-dist/blob/main/labs/exp02_acked_write_loss.py)
 
 ```bash
 uv run python labs/exp02_acked_write_loss.py --protocol async
@@ -38,7 +38,7 @@ reads `None` from the promoted stale replica, while Raft reads
 ## Experiment 3: partition and old-leader fencing
 
 Source:
-[exp03_partition_old_leader.py](https://github.com/system-in-miniature/MiniDist/blob/main/labs/exp03_partition_old_leader.py)
+[exp03_partition_old_leader.py](https://github.com/system-in-miniature/mini-dist/blob/main/labs/exp03_partition_old_leader.py)
 
 ```bash
 uv run python labs/exp03_partition_old_leader.py --protocol async
