@@ -1,0 +1,18 @@
+failure_files = ["tests/protocols/test_async_primary.py"]
+
+[[blocks]]
+id = "async-replication"
+title_en = "Primary acknowledgement and asynchronous replica flow"
+title_zh = "主节点确认与异步副本流"
+summary_en = "One mechanism block connects local acceptance, delayed delivery, backlog catch-up, and promotion loss."
+summary_zh = "一个机制板块串起本地确认、延迟投递、Backlog 追赶与提升后的数据丢失。"
+files = ["src/minidist/protocols/async_primary/group.py"]
+
+[[blocks]]
+id = "async-package"
+title_en = "Async-primary package boundary"
+title_zh = "异步主从包边界"
+summary_en = "Expose the learner-facing group and sync-mode vocabulary without treating import wiring as a protocol mechanism."
+summary_zh = "导出学习者可见的 Group 与同步模式词汇，不把导入接线当作协议机制。"
+files = ["src/minidist/protocols/async_primary/__init__.py"]
+supporting = true

@@ -1,0 +1,18 @@
+failure_files = ["tests/protocols/test_isr.py"]
+
+[[blocks]]
+id = "isr-high-watermark"
+title_en = "ISR membership, high watermark, epochs, and read authority"
+title_zh = "ISR 成员、High Watermark、Epoch 与读取权威"
+summary_en = "Connect dynamic in-sync membership to availability, committed visibility, clean election, catch-up, and lease-based authority."
+summary_zh = "把动态同步成员连接到可用性、已提交可见性、Clean Election、追赶与 Lease 权威。"
+files = ["src/minidist/protocols/isr/group.py"]
+
+[[blocks]]
+id = "isr-package"
+title_en = "ISR package boundary"
+title_zh = "ISR 包边界"
+summary_en = "Expose the group, log entry, catch-up mode, and probe values as supporting wiring."
+summary_zh = "把 Group、Log Entry、Catch-up Mode 与 Probe Value 作为支撑接线导出。"
+files = ["src/minidist/protocols/isr/__init__.py"]
+supporting = true

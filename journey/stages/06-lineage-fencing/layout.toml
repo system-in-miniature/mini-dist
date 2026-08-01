@@ -1,0 +1,17 @@
+failure_files = ["tests/labs/test_experiments.py", "tests/protocols/test_async_primary.py"]
+
+[[blocks]]
+id = "lineage-fencing"
+title_en = "Promotion lineage and receive-time fencing"
+title_zh = "提升谱系与接收时 Fencing"
+summary_en = "Make promotion start a new generation and reject queued messages whose sender, generation, or replication lineage is stale."
+summary_zh = "让 Promotion 开启新 Generation，并拒绝 Sender、Generation 或复制 Lineage 已过期的排队消息。"
+files = ["src/minidist/protocols/async_primary/group.py"]
+
+[[blocks]]
+id = "split-brain-experiment"
+title_en = "Async split-brain experiment"
+title_zh = "异步 Split-brain 实验"
+summary_en = "Extend Experiment 3 so both async primary and Raft answer the same minority-authority question."
+summary_zh = "扩展实验 3，让异步主从与 Raft 回答同一个少数侧权威问题。"
+files = ["labs/exp03_partition_old_leader.py"]

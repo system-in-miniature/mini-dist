@@ -1,0 +1,26 @@
+failure_files = ["tests/labs/test_experiments.py"]
+
+[[blocks]]
+id = "ack-boundary-experiments"
+title_en = "Experiments 1–2: convergence and acknowledged-write survival"
+title_zh = "实验 1–2：收敛与已确认写入存活"
+summary_en = "Run the same observation sequence against async primary and Raft so the acknowledgement boundary, not narration, explains the outcome."
+summary_zh = "对异步主从与 Raft 执行相同观察序列，让确认边界而不是叙述解释结果。"
+files = ["labs/exp01_normal_replication.py", "labs/exp02_acked_write_loss.py"]
+
+[[blocks]]
+id = "authority-partition-experiment"
+title_en = "Experiment 3: minority authority and log repair"
+title_zh = "实验 3：少数侧权威与日志修复"
+summary_en = "Turn Raft's partition behavior into returned facts about acceptance, terms, roles, logs, and final values."
+summary_zh = "把 Raft 分区行为变成有关确认、Term、Role、Log 与最终值的返回事实。"
+files = ["labs/exp03_partition_old_leader.py"]
+
+[[blocks]]
+id = "labs-package"
+title_en = "Experiment package scaffold"
+title_zh = "实验包脚手架"
+summary_en = "Keep the package marker as supporting wiring rather than a protocol lesson."
+summary_zh = "把包标记保留为支撑接线，而不是协议课程。"
+files = ["labs/__init__.py"]
+supporting = true

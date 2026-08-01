@@ -1,0 +1,18 @@
+failure_files = ["tests/protocols/test_raft.py"]
+
+[[blocks]]
+id = "raft-election-replication"
+title_en = "Election, log matching, commit, and authoritative reads"
+title_zh = "选举、日志匹配、提交与权威读取"
+summary_en = "Treat election and replication as one authority protocol: terms choose a leader, prefix proofs repair logs, and quorum evidence advances commit."
+summary_zh = "把选举与复制视为同一权威协议：Term 选择 Leader，前缀证明修复日志，Quorum 证据推进 Commit。"
+files = ["src/minidist/protocols/raft/group.py"]
+
+[[blocks]]
+id = "raft-package"
+title_en = "Raft package boundary"
+title_zh = "Raft 包边界"
+summary_en = "Expose the group, role, log-entry, and probe vocabulary as supporting API wiring."
+summary_zh = "把 Group、Role、LogEntry 与 Probe 词汇作为支撑 API 导出。"
+files = ["src/minidist/protocols/raft/__init__.py"]
+supporting = true

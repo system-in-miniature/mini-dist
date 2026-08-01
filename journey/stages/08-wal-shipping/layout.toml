@@ -1,0 +1,18 @@
+failure_files = ["tests/protocols/test_wal_shipping.py"]
+
+[[blocks]]
+id = "wal-shipping"
+title_en = "WAL positions, synchronous flush, retention, and timelines"
+title_zh = "WAL 位置、同步刷盘、保留窗口与 Timeline"
+summary_en = "Model the replicated object as ordered logical WAL bytes and keep local durability, remote flush waiting, catch-up, and promotion fencing distinct."
+summary_zh = "把复制对象建模为有序逻辑 WAL 字节，并区分本地持久、远端刷盘等待、追赶与提升 Fencing。"
+files = ["src/minidist/protocols/wal_shipping/group.py"]
+
+[[blocks]]
+id = "wal-package"
+title_en = "WAL-shipping package boundary"
+title_zh = "WAL Shipping 包边界"
+summary_en = "Expose the group, record, sync mode, and probes as supporting public wiring."
+summary_zh = "把 Group、Record、Sync Mode 与 Probe 作为支撑公共接线导出。"
+files = ["src/minidist/protocols/wal_shipping/__init__.py"]
+supporting = true

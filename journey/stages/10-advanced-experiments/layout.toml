@@ -1,0 +1,17 @@
+failure_files = ["tests/labs/test_experiments.py"]
+
+[[blocks]]
+id = "membership-and-catchup-matrix"
+title_en = "Experiments 4–5: slow replicas and reconnect windows"
+title_zh = "实验 4–5：慢副本与重连窗口"
+summary_en = "Compare how all four protocols treat a lagging member and decide incremental versus full catch-up."
+summary_zh = "比较四种协议如何处理落后成员，以及如何决定增量或全量追赶。"
+files = ["labs/exp04_slow_replica.py", "labs/exp05_replica_reconnect.py"]
+
+[[blocks]]
+id = "read-and-authority-matrix"
+title_en = "Experiments 6–7: read consistency and stale-side authority"
+title_zh = "实验 6–7：读取一致性与旧侧权威"
+summary_en = "Close the spectrum with a read-level matrix and a split-brain scenario that separates stale local visibility from guarded authority."
+summary_zh = "用 Read-level 矩阵与 Split-brain 场景收束光谱，区分陈旧本地可见性与受保护权威。"
+files = ["labs/exp06_read_consistency.py", "labs/exp07_split_brain_lease.py"]

@@ -75,7 +75,7 @@ Concrete protocols implement the same write/read/tick/lifecycle/probe shape, the
 
 ```python
 class ReplicationGroup(Protocol):
-    def client_write(self, key: bytes, value: bytes, ack: AckLevel) -> WriteResult: ...
+    """Minimal common driver surface used by cross-protocol experiments."""
 ```
 
 ##### Statement understanding
@@ -171,7 +171,7 @@ Ack Level 表示客户端等待哪些复制工作；Read Level 表示读取可�
 
 ```python
 class ReplicationGroup(Protocol):
-    def client_write(self, key: bytes, value: bytes, ack: AckLevel) -> WriteResult: ...
+    """Minimal common driver surface used by cross-protocol experiments."""
 ```
 
 ##### 关键语句理解

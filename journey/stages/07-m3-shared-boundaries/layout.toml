@@ -1,0 +1,25 @@
+failure_files = ["tests/sim/test_simulation.py", "tests/protocols/test_async_primary.py", "tests/protocols/test_raft.py"]
+
+[[blocks]]
+id = "simulated-durability"
+title_en = "Explicit staged and durable state"
+title_zh = "显式暂存态与持久态"
+summary_en = "Extend the common failure model so process crash and power-loss rollback are separate, observable faults."
+summary_zh = "扩展公共故障模型，把进程崩溃与掉电回滚分成独立、可观察的故障。"
+files = ["src/minidist/sim/failure.py"]
+
+[[blocks]]
+id = "async-durability"
+title_en = "Async acknowledgement versus local fsync"
+title_zh = "异步确认与本地 fsync"
+summary_en = "Expose which primary state survives an explicit loss of unflushed writes."
+summary_zh = "显式展示 Primary 的哪些状态能在未刷盘写入丢失后存活。"
+files = ["src/minidist/protocols/async_primary/group.py"]
+
+[[blocks]]
+id = "raft-runtime-boundaries"
+title_en = "Raft stable storage, timing budget, and local reads"
+title_zh = "Raft 稳定存储、时间预算与本地读取"
+summary_en = "Align Raft with the shared durability and read-observation surface while rejecting impossible timeout geometry."
+summary_zh = "让 Raft 对齐公共持久性与读取观察面，并拒绝不可能的 Timeout 几何。"
+files = ["src/minidist/protocols/raft/group.py"]
