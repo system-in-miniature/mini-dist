@@ -1,0 +1,147 @@
+[project]
+name = "MiniDist"
+package = "minidist"
+repository_url = "https://github.com/system-in-miniature/mini-dist"
+owned_roots = ["src/minidist", "labs", "tests/sim", "tests/protocols", "tests/labs"]
+owned_files = ["pyproject.toml", "uv.lock", "uv.toml", "tests/test_public_types.py"]
+
+[[stages]]
+number = 1
+slug = "deterministic-simulation"
+chapter = 2
+source = "86c9886"
+files = [
+  "pyproject.toml",
+  "uv.lock",
+  "uv.toml",
+  "src/minidist/__init__.py",
+  "src/minidist/sim/__init__.py",
+  "src/minidist/sim/clock.py",
+  "src/minidist/sim/failure.py",
+  "src/minidist/sim/network.py",
+  "src/minidist/sim/scheduler.py",
+  "src/minidist/sim/trace.py",
+  "tests/sim/test_simulation.py",
+]
+tests = ["tests/sim/test_simulation.py"]
+
+[[stages]]
+number = 2
+slug = "replication-contract"
+chapter = 3
+source = "86c9886"
+files = [
+  "src/minidist/protocols/__init__.py",
+  "src/minidist/protocols/types.py",
+  "tests/test_public_types.py",
+]
+tests = ["tests/test_public_types.py"]
+
+[[stages]]
+number = 3
+slug = "async-primary"
+chapter = 4
+source = "86c9886"
+files = [
+  "src/minidist/protocols/async_primary/__init__.py",
+  "src/minidist/protocols/async_primary/group.py",
+  "tests/protocols/test_async_primary.py",
+]
+tests = ["tests/protocols/test_async_primary.py"]
+
+[[stages]]
+number = 4
+slug = "raft-consensus"
+chapter = 6
+source = "86c9886"
+files = [
+  "src/minidist/protocols/raft/__init__.py",
+  "src/minidist/protocols/raft/group.py",
+  "tests/protocols/test_raft.py",
+]
+tests = ["tests/protocols/test_raft.py"]
+
+[[stages]]
+number = 5
+slug = "spectrum-experiments"
+chapter = 8
+source = "86c9886"
+files = [
+  "labs/__init__.py",
+  "labs/exp01_normal_replication.py",
+  "labs/exp02_acked_write_loss.py",
+  "labs/exp03_partition_old_leader.py",
+  "tests/labs/test_experiments.py",
+]
+tests = ["tests/labs/test_experiments.py"]
+
+[[stages]]
+number = 6
+slug = "lineage-fencing"
+chapter = 5
+source = "3826aa7"
+files = [
+  "labs/exp03_partition_old_leader.py",
+  "src/minidist/protocols/async_primary/group.py",
+  "tests/labs/test_experiments.py",
+  "tests/protocols/test_async_primary.py",
+]
+tests = ["tests/protocols/test_async_primary.py", "tests/labs/test_experiments.py"]
+
+[[stages]]
+number = 7
+slug = "m3-shared-boundaries"
+chapter = 2
+source = "HEAD"
+files = [
+  "src/minidist/protocols/async_primary/group.py",
+  "src/minidist/protocols/raft/group.py",
+  "src/minidist/sim/failure.py",
+  "tests/protocols/test_async_primary.py",
+  "tests/protocols/test_raft.py",
+  "tests/sim/test_simulation.py",
+]
+tests = [
+  "tests/sim/test_simulation.py",
+  "tests/protocols/test_async_primary.py",
+  "tests/protocols/test_raft.py",
+]
+
+[[stages]]
+number = 8
+slug = "wal-shipping"
+chapter = 9
+source = "HEAD"
+files = [
+  "src/minidist/protocols/wal_shipping/__init__.py",
+  "src/minidist/protocols/wal_shipping/group.py",
+  "tests/protocols/test_wal_shipping.py",
+]
+tests = ["tests/protocols/test_wal_shipping.py"]
+
+[[stages]]
+number = 9
+slug = "isr-high-watermark"
+chapter = 10
+source = "HEAD"
+files = [
+  "src/minidist/protocols/isr/__init__.py",
+  "src/minidist/protocols/isr/group.py",
+  "tests/protocols/test_isr.py",
+]
+tests = ["tests/protocols/test_isr.py"]
+
+[[stages]]
+number = 10
+slug = "advanced-experiments"
+chapter = 8
+source = "HEAD"
+files = [
+  "labs/exp04_slow_replica.py",
+  "labs/exp05_replica_reconnect.py",
+  "labs/exp06_read_consistency.py",
+  "labs/exp07_split_brain_lease.py",
+  "tests/labs/test_experiments.py",
+]
+tests = ["tests/labs/test_experiments.py"]
+
