@@ -1,0 +1,136 @@
+diff --git a/src/minidist/protocols/__init__.py b/src/minidist/protocols/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..c1a94a2dc02bbce84c519db2d4087c86c99ebb4e
+--- /dev/null
++++ b/src/minidist/protocols/__init__.py
+@@ -0,0 +1,21 @@
++"""Public comparison interface shared by MiniDist protocol implementations."""
++
++from .types import (
++    AckLevel,
++    NodeId,
++    ReadLevel,
++    ReadResult,
++    ReplicationGroup,
++    UnsupportedLevelError,
++    WriteResult,
++)
++
++__all__ = [
++    "AckLevel",
++    "NodeId",
++    "ReadLevel",
++    "ReadResult",
++    "ReplicationGroup",
++    "UnsupportedLevelError",
++    "WriteResult",
++]
+diff --git a/src/minidist/protocols/types.py b/src/minidist/protocols/types.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..44861a3c2e85fdc5692518ff96d83dcfc9353b89
+--- /dev/null
++++ b/src/minidist/protocols/types.py
+@@ -0,0 +1,73 @@
++"""Shared vocabulary for comparing replication protocols.
++
++Real systems attach different guarantees to similarly named knobs.  These
++enums provide a common experiment vocabulary without pretending every
++protocol supports every level.  Implementations must reject unsupported
++levels rather than silently weakening the requested guarantee.
++"""
++
++from dataclasses import dataclass
++from enum import Enum, auto
++from typing import Protocol, TypeAlias
++
++NodeId: TypeAlias = str
++
++
++class AckLevel(Enum):
++    """How much replication work a client asks to wait for."""
++
++    NONE = auto()
++    LEADER = auto()
++    QUORUM = auto()
++    ALL_ISR = auto()
++
++
++class ReadLevel(Enum):
++    """Where a read may run and what consistency it asks for."""
++
++    LOCAL = auto()
++    LEADER = auto()
++    LINEARIZABLE = auto()
++
++
++class UnsupportedLevelError(ValueError):
++    """Raised instead of silently pretending a protocol is stronger."""
++
++
++@dataclass(frozen=True, slots=True)
++class WriteResult:
++    """Public result of a write accepted by a replication group."""
++
++    accepted: bool
++    offset: int
++    message: str = ""
++
++
++@dataclass(frozen=True, slots=True)
++class ReadResult:
++    """A value together with the node and replication point that served it."""
++
++    value: bytes | None
++    node: NodeId
++    offset: int
++
++
++class ReplicationGroup(Protocol):
++    """Minimal common driver surface used by cross-protocol experiments."""
++
++    def client_write(self, key: bytes, value: bytes, ack: AckLevel) -> WriteResult: ...
++
++    def client_read(
++        self,
++        key: bytes,
++        level: ReadLevel,
++        node: NodeId | None = None,
++    ) -> ReadResult: ...
++
++    def tick(self) -> None: ...
++
++    def crash(self, node: NodeId) -> None: ...
++
++    def restart(self, node: NodeId) -> None: ...
++
++    def probe(self) -> object: ...
+diff --git a/tests/test_public_types.py b/tests/test_public_types.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..dff9d4b24c049e80d0a4d03c4ccecda54f717742
+--- /dev/null
++++ b/tests/test_public_types.py
+@@ -0,0 +1,24 @@
++from minidist.protocols import (
++    AckLevel,
++    ReadLevel,
++    ReadResult,
++    UnsupportedLevelError,
++    WriteResult,
++)
++
++
++def test_replication_api_levels_and_results_are_explicit() -> None:
++    assert [level.name for level in AckLevel] == [
++        "NONE",
++        "LEADER",
++        "QUORUM",
++        "ALL_ISR",
++    ]
++    assert [level.name for level in ReadLevel] == [
++        "LOCAL",
++        "LEADER",
++        "LINEARIZABLE",
++    ]
++    assert WriteResult(accepted=True, offset=3).offset == 3
++    assert ReadResult(value=b"value", node="n1", offset=2).value == b"value"
++    assert issubclass(UnsupportedLevelError, ValueError)
