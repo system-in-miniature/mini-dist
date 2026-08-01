@@ -1,0 +1,27 @@
+failure_files = ["tests/sim/test_simulation.py"]
+
+[[blocks]]
+id = "logical-time-and-order"
+title_en = "Logical time and deterministic event order"
+title_zh = "逻辑时间与确定性事件顺序"
+summary_en = "Make time, tie-breaking, and traces explicit so one experiment script always produces the same event history."
+summary_zh = "显式化时间、同 Tick 排序与 Trace，使同一实验脚本始终产生相同事件历史。"
+files = ["src/minidist/sim/clock.py", "src/minidist/sim/trace.py", "src/minidist/sim/scheduler.py"]
+
+[[blocks]]
+id = "fault-surfaces"
+title_en = "Seeded network and crash boundaries"
+title_zh = "带种子的网络与崩溃边界"
+summary_en = "Model delay, drop, reorder, partition, volatile loss, and restart as reproducible state transitions."
+summary_zh = "把延迟、丢包、乱序、分区、易失状态丢失与重启建模为可复现状态迁移。"
+files = ["src/minidist/sim/network.py", "src/minidist/sim/failure.py"]
+
+[[blocks]]
+id = "simulation-scaffold"
+title_en = "Package and simulation scaffold"
+title_zh = "包与仿真脚手架"
+summary_en = "Install the package, export the simulator vocabulary, and pin the test environment without treating project wiring as a distributed protocol."
+summary_zh = "接好包、仿真词汇导出与测试环境，但不把项目接线当成分布式协议。"
+files = ["pyproject.toml", "uv.lock", "uv.toml", "src/minidist/__init__.py", "src/minidist/sim/__init__.py"]
+supporting = true
+

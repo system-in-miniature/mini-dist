@@ -1,0 +1,10 @@
+failure_files = ["tests/test_public_types.py"]
+
+[[blocks]]
+id = "comparison-vocabulary"
+title_en = "Explicit comparison vocabulary"
+title_zh = "显式比较词汇"
+summary_en = "Define acknowledgement and read-strength requests plus stable results without claiming every protocol supports every level."
+summary_zh = "定义确认级别、读取强度与稳定结果，同时不声称每个协议都支持全部级别。"
+files = ["src/minidist/protocols/types.py", "src/minidist/protocols/__init__.py"]
+
