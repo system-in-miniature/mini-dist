@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Mapping
 
 from minidist.protocols.types import (
     AckLevel,

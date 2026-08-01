@@ -238,7 +238,7 @@ Connect dynamic in-sync membership to availability, committed visibility, clean 
     ```diff
     diff --git a/src/minidist/protocols/isr/group.py b/src/minidist/protocols/isr/group.py
     new file mode 100644
-    index 0000000000000000000000000000000000000000..7bc4dada155b1e3064ed91ec403e97b65161f3f8
+    index 0000000000000000000000000000000000000000..c11f5f996358221580dddda886a7e6a89924a3c1
     --- /dev/null
     +++ b/src/minidist/protocols/isr/group.py
     @@ -0,0 +1,685 @@
@@ -263,7 +263,7 @@ Connect dynamic in-sync membership to availability, committed visibility, clean 
     +from dataclasses import dataclass, field
     +from enum import Enum
     +from types import MappingProxyType
-    +from typing import Any, Mapping
+    +from typing import Mapping
     +
     +from minidist.protocols.types import (
     +    AckLevel,

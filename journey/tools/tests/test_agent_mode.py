@@ -6,8 +6,6 @@ from pathlib import Path
 import subprocess
 import sys
 
-import pytest
-
 from journey.tools import build_journey
 
 
@@ -92,4 +90,3 @@ def test_agent_rejects_a_different_stage_without_explicit_reset(tmp_path: Path) 
 
     assert result.returncode != 0
     assert "prepared for Stage 03" in result.stdout
-
