@@ -9,6 +9,7 @@ theme:
   name: material
   logo: assets/brand/avatar.svg
   favicon: assets/brand/avatar.svg
+  language: en
   features:
     - navigation.tabs
     - navigation.sections
@@ -26,7 +27,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - English:
-      - Tutorial:
+      - Mechanism Tutorial:
           - 1 · Why a Protocol Spectrum?: tutorial/01-why-a-spectrum.md
           - 2 · Deterministic Simulation: tutorial/02-deterministic-simulation.md
           - 3 · Replication Group: tutorial/03-replication-group.md
@@ -37,6 +38,20 @@ nav:
           - 8 · Seven Experiments × Four Protocols: tutorial/08-experiments.md
           - 9 · WAL Shipping: tutorial/09-wal-shipping.md
           - 10 · ISR and High Watermark: tutorial/10-isr.md
+      - Self-Guided Rebuild:
+          - Build MiniDist yourself: journey/index.md
+          - "01 · Deterministic simulation substrate": journey/stage-01.md
+          - "02 · Replication comparison contract": journey/stage-02.md
+          - "03 · Asynchronous primary replication": journey/stage-03.md
+          - "04 · Raft authority and committed replication": journey/stage-04.md
+          - "05 · Comparable experiments 1–3": journey/stage-05.md
+          - "06 · Promotion lineage fencing": journey/stage-06.md
+          - "07 · Shared durability and observation boundaries": journey/stage-07.md
+          - "08 · WAL shipping and synchronous flush": journey/stage-08.md
+          - "09 · ISR membership and high watermark": journey/stage-09.md
+          - "10 · Four-protocol experiment matrix": journey/stage-10.md
+      - Agent-Guided Rebuild:
+          - CLI usage: agent-guided.md
       - Reference:
           - Architecture and scope: https://github.com/system-in-miniature/mini-dist#repository-layout
           - Mechanism mapping: mapping.md
@@ -44,7 +59,7 @@ nav:
           - Differences and behavior matrix: experiments.md
           - Project README: https://github.com/system-in-miniature/mini-dist#readme
   - 简体中文:
-      - 教程:
+      - 机制教程:
           - 全书目录: zh/index.md
           - 1 · 为什么是协议谱系: zh/tutorial/01-why-a-spectrum.md
           - 2 · 确定性仿真: zh/tutorial/02-deterministic-simulation.md
@@ -56,9 +71,28 @@ nav:
           - 8 · 七实验 × 四协议: zh/tutorial/08-experiments.md
           - 9 · WAL 运输: zh/tutorial/09-wal-shipping.md
           - 10 · ISR 与 High Watermark: zh/tutorial/10-isr.md
+      - 自主重建:
+          - 从零构建 MiniDist: zh/journey/index.md
+          - "01 · 确定性仿真基座": zh/journey/stage-01.md
+          - "02 · 复制比较契约": zh/journey/stage-02.md
+          - "03 · 异步主从复制": zh/journey/stage-03.md
+          - "04 · Raft 权威与已提交复制": zh/journey/stage-04.md
+          - "05 · 可比较实验 1–3": zh/journey/stage-05.md
+          - "06 · 提升谱系 Fencing": zh/journey/stage-06.md
+          - "07 · 公共持久性与观察边界": zh/journey/stage-07.md
+          - "08 · WAL Shipping 与同步刷盘": zh/journey/stage-08.md
+          - "09 · ISR 成员与 High Watermark": zh/journey/stage-09.md
+          - "10 · 四协议实验矩阵": zh/journey/stage-10.md
+      - Agent 带教:
+          - CLI 使用教程: zh/agent-guided.md
       - 参考资料:
           - 架构与范围: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md
           - 机制映射: zh/mapping.md
           - 实验命令指南: zh/labs-guide.md
           - 差异与行为矩阵: zh/experiments.md
           - 项目 README: https://github.com/system-in-miniature/mini-dist/blob/main/README.zh-CN.md
+
+extra_javascript:
+  - assets/javascripts/language-switch.js
+
+strict: true

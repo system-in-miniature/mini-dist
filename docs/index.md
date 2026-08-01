@@ -14,6 +14,26 @@ MiniDist 在同一个确定性进程内实验室中比较四种复制协议家�
 进入 Raft，用七个实验对照全谱系，再展开两列中间协议的 WAL shipping 与
 ISR/HW 机制。
 
+## Learning modes / 学习模式
+
+### Mechanism Tutorial / 机制教程
+
+Follow the ten chapters below when you want a concept-first explanation of the
+four protocol families. / 希望按概念理解四种协议家族时，按下方十章阅读。
+
+### Self-Guided Rebuild / 自主重建
+
+Use the [ten-stage Journey](journey/index.md) to understand the current problem,
+test contract, concepts, and grouped code diffs in a browser. / 使用
+[十阶段重建旅程](zh/journey/index.md)，在浏览器中依次理解当前问题、测试契约、
+基本概念与按机制分组的代码差异。
+
+### Agent-Guided Rebuild / Agent 带教
+
+Use the [CLI guide](agent-guided.md) when you want Codex to interactively teach,
+implement, and verify one Stage. / 希望由 Codex 互动讲解、实现并验收一个 Stage 时，
+参照 [CLI 使用教程](zh/agent-guided.md)。
+
 ## Chapters / 全书目录
 
 1. [Why a Protocol Spectrum? / 为什么是协议谱系](tutorial/01-why-a-spectrum.md) — why this is not

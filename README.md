@@ -36,6 +36,16 @@ surface, experiments 1–7 have a four-column evidence matrix, and the failure
 injector exposes an explicit acknowledged-but-unfsynced power-loss window.
 Same-seed replay covers both new protocols.
 
+## Learning Modes
+
+- **Mechanism Tutorial** — read the protocol spectrum by concept and mechanism
+  in the [bilingual book](docs/index.md).
+- **Self-Guided Rebuild** — rebuild the project through ten independently
+  browsable Stages with test evidence and grouped diffs in the
+  [Journey](docs/journey/index.md).
+- **Agent-Guided Rebuild** — ask Codex to guide, implement, explain, and verify
+  one Stage interactively; see the short [CLI usage guide](docs/agent-guided.md).
+
 ## Quick Start
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).

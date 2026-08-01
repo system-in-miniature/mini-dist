@@ -1,0 +1,664 @@
+# Stage 10 · Four-protocol experiment matrix
+
+### Goal
+
+Complete Experiments 4–7 across async primary, WAL shipping, ISR, and Raft so membership, catch-up, read consistency, and stale-authority behavior can be compared from returned evidence.
+
+??? note "Deliverable files"
+    - `labs/exp04_slow_replica.py`
+    - `labs/exp05_replica_reconnect.py`
+    - `labs/exp06_read_consistency.py`
+    - `labs/exp07_split_brain_lease.py`
+    - `tests/labs/test_experiments.py`
+
+### The problem at this point
+
+The four protocols now exist, but isolated implementation tests do not answer the project's closing questions: what a slow replica changes, when reconnect becomes full copy, which reads may be stale, and how an old side is prevented from claiming current authority.
+
+### Test contract
+
+#### See the failure first
+
+The read-matrix contract requires every protocol's local read to be stale and leader read fresh under one lag script, while linearizable status remains `unsupported`, `blocked`, or `fresh` according to the actual mechanism. Collapsing all exceptions into one value would erase the distinction between missing capability and temporarily unavailable authority.
+
+??? note "File diff: tests/labs/test_experiments.py"
+    ```diff
+    diff --git a/tests/labs/test_experiments.py b/tests/labs/test_experiments.py
+    index c65cd9cb45f36eb7b93cbcf00483b01c3ed52c7e..baf3432f01c59d00b46316b9d2106306e4a7e8a4 100644
+    --- a/tests/labs/test_experiments.py
+    +++ b/tests/labs/test_experiments.py
+    @@ -1,6 +1,10 @@
+     from labs.exp01_normal_replication import run_experiment as run_normal
+     from labs.exp02_acked_write_loss import run_experiment as run_loss
+     from labs.exp03_partition_old_leader import run_experiment as run_partition
+    +from labs.exp04_slow_replica import run_experiment as run_slow
+    +from labs.exp05_replica_reconnect import run_experiment as run_reconnect
+    +from labs.exp06_read_consistency import run_experiment as run_reads
+    +from labs.exp07_split_brain_lease import run_experiment as run_split_read
+
+
+     def test_experiment_1_observes_delayed_convergence() -> None:
+    @@ -55,3 +59,66 @@ def test_experiment_3_async_primary_exposes_split_brain_dirty_writes() -> None:
+         assert result.converged_after_heal
+         assert result.old_dirty_value_after_heal is None
+         assert result.new_dirty_value_after_heal == b"new-primary"
+    +
+    +
+    +def test_experiment_4_distinguishes_isr_shrink_from_raft_majority() -> None:
+    +    isr = run_slow(protocol="isr", verbose=False)
+    +    raft = run_slow(protocol="raft", verbose=False)
+    +
+    +    assert isr.write_available
+    +    assert isr.slow_replica_stale
+    +    assert isr.membership_effect == "removed from ISR"
+    +    assert raft.write_available
+    +    assert raft.slow_replica_stale
+    +    assert raft.membership_effect == "fixed voter; majority unaffected"
+    +
+    +
+    +def test_experiment_4_has_all_four_protocol_columns() -> None:
+    +    results = {
+    +        protocol: run_slow(protocol=protocol, verbose=False)
+    +        for protocol in ("async", "wal", "isr", "raft")
+    +    }
+    +    assert all(result.write_available for result in results.values())
+    +    assert results["wal"].membership_effect == "async standby does not gate commit"
+    +
+    +
+    +def test_experiment_5_catchup_trigger_matrix_covers_all_protocols() -> None:
+    +    results = {
+    +        protocol: run_reconnect(protocol=protocol, verbose=False)
+    +        for protocol in ("async", "wal", "isr", "raft")
+    +    }
+    +
+    +    assert results["async"].inside_window == "incremental"
+    +    assert results["async"].outside_window == "full"
+    +    assert results["wal"].inside_window == "incremental"
+    +    assert results["wal"].outside_window == "full"
+    +    assert results["isr"].inside_window == "incremental"
+    +    assert results["isr"].outside_window == "full"
+    +    assert results["raft"].inside_window == "log replay"
+    +    assert results["raft"].outside_window == "log replay"
+    +
+    +
+    +def test_experiment_6_read_level_matrix_names_stale_and_authority_failures() -> None:
+    +    matrix = run_reads(verbose=False)
+    +
+    +    for protocol in ("async", "wal", "isr", "raft"):
+    +        assert matrix[protocol]["LOCAL"].status == "stale"
+    +        assert matrix[protocol]["LEADER"].status == "fresh"
+    +    assert matrix["async"]["LINEARIZABLE"].status == "unsupported"
+    +    assert matrix["wal"]["LINEARIZABLE"].status == "unsupported"
+    +    assert matrix["isr"]["LINEARIZABLE"].status == "blocked"
+    +    assert matrix["raft"]["LINEARIZABLE"].status == "fresh"
+    +
+    +
+    +def test_experiment_7_split_brain_local_read_and_authority_guard() -> None:
+    +    results = {
+    +        protocol: run_split_read(protocol=protocol, verbose=False)
+    +        for protocol in ("async", "wal", "isr", "raft")
+    +    }
+    +
+    +    assert all(result.old_side_local_value == b"before" for result in results.values())
+    +    assert all(result.current_value == b"after" for result in results.values())
+    +    assert results["async"].guard == "unsupported"
+    +    assert results["wal"].guard == "unsupported"
+    +    assert results["isr"].guard == "lease fenced"
+    +    assert results["raft"].guard == "read-index fenced"
+    ```
+
+**What this test locks**
+
+Five contracts lock all four columns for slow-replica availability, catch-up triggers, read-level results, and split-brain authority guards.
+
+**How it constructs the counterexample**
+
+Tests invoke each protocol through the same experiment entry point and assert normalized statuses plus protocol-specific membership or guard explanations.
+
+**Key test statement**
+
+```python
+assert matrix["isr"]["LINEARIZABLE"].status == "blocked"
+assert matrix["raft"]["LINEARIZABLE"].status == "fresh"
+```
+
+**What a failure means**
+
+The matrix hid a semantic difference, a scenario stopped being comparable, or a protocol reported authority it could not prove.
+
+### Basic concepts
+
+A slow replica affects voting, synchronous wait policy, or dynamic membership differently. Retention is a protocol-specific continuity rule: async backlog, WAL retention, ISR retained log, or Raft log replay. Read consistency has both location and proof dimensions. A stale local value can remain observable without being authoritative; leases and read-index barriers are distinct guards.
+
+### Why this mechanism is necessary
+
+The final learning artifact is the comparison itself. It should let a learner predict outcomes from mechanisms rather than memorize product labels, while keeping unsupported and blocked capabilities visible.
+
+### Runtime mental model
+
+Each lab has a protocol selector, one fixed fault script, and an immutable result. Experiments 4–5 return availability/membership and catch-up mode. Experiment 6 converts reads or failures into `fresh`, `stale`, `unsupported`, or `blocked`. Experiment 7 reads the isolated old side locally, reads current state through the protocol's authority path, and reports its guard.
+
+### Mechanism blocks
+
+#### Experiments 4–5: slow replicas and reconnect windows
+
+Compare how all four protocols treat a lagging member and decide incremental versus full catch-up.
+
+??? note "File diff: labs/exp04_slow_replica.py"
+    ```diff
+    diff --git a/labs/exp04_slow_replica.py b/labs/exp04_slow_replica.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..158bbf7e9d722be52f5deb91be24e3caf3105acb
+    --- /dev/null
+    +++ b/labs/exp04_slow_replica.py
+    @@ -0,0 +1,86 @@
+    +"""Experiment 4: compare availability while one replica is slow."""
+    +
+    +import argparse
+    +from dataclasses import dataclass
+    +
+    +from minidist.protocols import AckLevel
+    +from minidist.protocols.async_primary import AsyncPrimaryGroup
+    +from minidist.protocols.isr import IsrGroup
+    +from minidist.protocols.raft import RaftGroup
+    +from minidist.protocols.wal_shipping import WalShippingGroup
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class ExperimentResult:
+    +    protocol: str
+    +    write_available: bool
+    +    slow_replica_stale: bool
+    +    membership_effect: str
+    +
+    +
+    +def run_experiment(*, protocol: str = "isr", verbose: bool = True) -> ExperimentResult:
+    +    if protocol == "async":
+    +        group = AsyncPrimaryGroup(replica_ids=("slow", "fast"))
+    +        group.isolate("slow")
+    +        write = group.client_write(b"k", b"v", AckLevel.LEADER)
+    +        group.run_until_idle()
+    +        stale = group.probe().nodes["slow"].data.get(b"k") is None
+    +        effect = "replica is not a voter"
+    +    elif protocol == "wal":
+    +        group = WalShippingGroup(
+    +            standby_ids=("slow", "fast"),
+    +            synchronous_standby_ids=(),
+    +        )
+    +        group.isolate("slow")
+    +        write = group.client_write(b"k", b"v", AckLevel.LEADER)
+    +        group.run_until_idle()
+    +        stale = group.probe().nodes["slow"].data.get(b"k") is None
+    +        effect = "async standby does not gate commit"
+    +    elif protocol == "isr":
+    +        group = IsrGroup(replica_lag_timeout=2, min_insync_replicas=2)
+    +        slow_node = next(
+    +            node for node in group.probe().nodes if node != group.probe().leader
+    +        )
+    +        group.set_replica_slow(slow_node, True)
+    +        write = group.client_write(b"k", b"v", AckLevel.ALL_ISR)
+    +        state = group.probe()
+    +        stale = state.nodes[slow_node].data.get(b"k") is None
+    +        effect = "removed from ISR" if slow_node not in state.isr else "still in ISR"
+    +    elif protocol == "raft":
+    +        group = RaftGroup(
+    +            seed=404,
+    +            election_timeout_range=(4, 7),
+    +            heartbeat_interval=1,
+    +        )
+    +        group.run_until_leader()
+    +        slow_node = next(
+    +            node for node in group.probe().nodes if node != group.probe().leader
+    +        )
+    +        group.isolate(slow_node)
+    +        write = group.client_write(b"k", b"v", AckLevel.QUORUM)
+    +        stale = group.probe().nodes[slow_node].data.get(b"k") is None
+    +        effect = "fixed voter; majority unaffected"
+    +    else:
+    +        raise ValueError("protocol must be async, wal, isr, or raft")
+    +
+    +    result = ExperimentResult(protocol, write.accepted, stale, effect)
+    +    if verbose:
+    +        print(f"实验 4 [{protocol}]：write_available={result.write_available}")
+    +        print(
+    +            f"slow_replica_stale={result.slow_replica_stale}; "
+    +            f"membership={result.membership_effect}"
+    +        )
+    +    return result
+    +
+    +
+    +if __name__ == "__main__":
+    +    parser = argparse.ArgumentParser()
+    +    parser.add_argument(
+    +        "--protocol",
+    +        choices=("async", "wal", "isr", "raft", "all"),
+    +        default="all",
+    +    )
+    +    args = parser.parse_args()
+    +    selected = ("async", "wal", "isr", "raft") if args.protocol == "all" else (args.protocol,)
+    +    for name in selected:
+    +        run_experiment(protocol=name)
+    ```
+
+**What it is and why it appears**
+
+Experiment 4 asks whether writes remain available and what membership meaning a slow node has in each protocol.
+
+**Runtime role**
+
+The script isolates or slows one node, performs the protocol's supported acknowledged write, and returns stale visibility plus a named membership effect.
+
+**Key code**
+
+```python
+write = group.client_write(b"k", b"v", AckLevel.ALL_ISR)
+state = group.probe()
+stale = state.nodes[slow_node].data.get(b"k") is None
+```
+
+**Statement understanding**
+
+All four columns execute the same experiment API; the returned membership explanation preserves why availability holds.
+
+??? note "File diff: labs/exp05_replica_reconnect.py"
+    ```diff
+    diff --git a/labs/exp05_replica_reconnect.py b/labs/exp05_replica_reconnect.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..0dad31b96ad8bb5317449ee74c0857063ded4bb5
+    --- /dev/null
+    +++ b/labs/exp05_replica_reconnect.py
+    @@ -0,0 +1,108 @@
+    +"""Experiment 5: compare incremental and full catch-up triggers."""
+    +
+    +import argparse
+    +from dataclasses import dataclass
+    +
+    +from minidist.protocols import AckLevel
+    +from minidist.protocols.async_primary import AsyncPrimaryGroup
+    +from minidist.protocols.isr import IsrGroup
+    +from minidist.protocols.raft import RaftGroup
+    +from minidist.protocols.wal_shipping import WalShippingGroup
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class ExperimentResult:
+    +    protocol: str
+    +    inside_window: str
+    +    outside_window: str
+    +
+    +
+    +def _write_many(group: object, ack: AckLevel, count: int) -> None:
+    +    for number in range(count):
+    +        group.client_write(f"k{number}".encode(), str(number).encode(), ack)  # type: ignore[attr-defined]
+    +
+    +
+    +def run_experiment(*, protocol: str = "async", verbose: bool = True) -> ExperimentResult:
+    +    if protocol == "async":
+    +        inside = AsyncPrimaryGroup(replica_ids=("r",), backlog_size=3)
+    +        inside.crash("r")
+    +        _write_many(inside, AckLevel.LEADER, 2)
+    +        inside.restart("r")
+    +        inside.run_until_idle()
+    +        inside_mode = inside.probe().nodes["r"].sync_mode.name.lower().replace("partial", "incremental")
+    +
+    +        outside = AsyncPrimaryGroup(replica_ids=("r",), backlog_size=2)
+    +        outside.crash("r")
+    +        _write_many(outside, AckLevel.LEADER, 3)
+    +        outside.restart("r")
+    +        outside.run_until_idle()
+    +        outside_mode = outside.probe().nodes["r"].sync_mode.name.lower()
+    +    elif protocol == "wal":
+    +        inside = WalShippingGroup(standby_ids=("r",), wal_retention=3)
+    +        inside.crash("r")
+    +        _write_many(inside, AckLevel.LEADER, 2)
+    +        inside.restart("r")
+    +        inside.run_until_idle()
+    +        inside_mode = inside.probe().nodes["r"].sync_mode.value
+    +
+    +        outside = WalShippingGroup(standby_ids=("r",), wal_retention=2)
+    +        outside.crash("r")
+    +        _write_many(outside, AckLevel.LEADER, 3)
+    +        outside.restart("r")
+    +        outside.run_until_idle()
+    +        outside_mode = outside.probe().nodes["r"].sync_mode.value
+    +    elif protocol == "isr":
+    +        inside = IsrGroup(log_retention=3)
+    +        follower = next(node for node in inside.probe().nodes if node != inside.probe().leader)
+    +        inside.crash(follower)
+    +        _write_many(inside, AckLevel.ALL_ISR, 2)
+    +        inside.restart(follower)
+    +        inside.run_until_idle()
+    +        inside_mode = inside.probe().nodes[follower].catch_up_mode.value
+    +
+    +        outside = IsrGroup(log_retention=2)
+    +        follower = next(node for node in outside.probe().nodes if node != outside.probe().leader)
+    +        outside.crash(follower)
+    +        _write_many(outside, AckLevel.ALL_ISR, 3)
+    +        outside.restart(follower)
+    +        outside.run_until_idle()
+    +        outside_mode = outside.probe().nodes[follower].catch_up_mode.value
+    +    elif protocol == "raft":
+    +        def replay(count: int) -> str:
+    +            group = RaftGroup(
+    +                seed=505,
+    +                election_timeout_range=(4, 7),
+    +                heartbeat_interval=1,
+    +            )
+    +            group.run_until_leader()
+    +            follower = next(node for node in group.probe().nodes if node != group.probe().leader)
+    +            group.crash(follower)
+    +            _write_many(group, AckLevel.QUORUM, count)
+    +            group.restart(follower)
+    +            group.run_until_converged()
+    +            return "log replay"
+    +
+    +        inside_mode, outside_mode = replay(2), replay(6)
+    +    else:
+    +        raise ValueError("protocol must be async, wal, isr, or raft")
+    +
+    +    result = ExperimentResult(protocol, inside_mode, outside_mode)
+    +    if verbose:
+    +        print(
+    +            f"实验 5 [{protocol}]：inside_window={inside_mode}; "
+    +            f"outside_window={outside_mode}"
+    +        )
+    +    return result
+    +
+    +
+    +if __name__ == "__main__":
+    +    parser = argparse.ArgumentParser()
+    +    parser.add_argument(
+    +        "--protocol",
+    +        choices=("async", "wal", "isr", "raft", "all"),
+    +        default="all",
+    +    )
+    +    args = parser.parse_args()
+    +    selected = ("async", "wal", "isr", "raft") if args.protocol == "all" else (args.protocol,)
+    +    for name in selected:
+    +        run_experiment(protocol=name)
+    ```
+
+**What it is and why it appears**
+
+Experiment 5 disconnects a replica for a short and long gap and reports the resulting catch-up mode.
+
+**Runtime role**
+
+It drives each concrete group's crash, write, restart, and idle operations, then translates protocol vocabulary into comparable result strings.
+
+**Key code**
+
+```python
+_write_many(inside, AckLevel.LEADER, 2)
+inside.restart("r")
+inside.run_until_idle()
+```
+
+**Statement understanding**
+
+The number of missed writes is controlled relative to retention; reconnect mode is an observed result, not selected by the lab.
+
+#### Experiments 6–7: read consistency and stale-side authority
+
+Close the spectrum with a read-level matrix and a split-brain scenario that separates stale local visibility from guarded authority.
+
+??? note "File diff: labs/exp06_read_consistency.py"
+    ```diff
+    diff --git a/labs/exp06_read_consistency.py b/labs/exp06_read_consistency.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..01099e307516f3720c69823fd30f7bb11471162f
+    --- /dev/null
+    +++ b/labs/exp06_read_consistency.py
+    @@ -0,0 +1,80 @@
+    +"""Experiment 6: measure every ReadLevel across all four protocols."""
+    +
+    +from dataclasses import dataclass
+    +
+    +from minidist.protocols import AckLevel, ReadLevel, UnsupportedLevelError
+    +from minidist.protocols.async_primary import AsyncPrimaryGroup
+    +from minidist.protocols.isr import IsrGroup
+    +from minidist.protocols.raft import RaftGroup
+    +from minidist.protocols.wal_shipping import WalShippingGroup
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class ReadObservation:
+    +    status: str
+    +    value: bytes | None
+    +
+    +
+    +def _observe(group: object, level: ReadLevel, node: str | None = None) -> ReadObservation:
+    +    try:
+    +        result = group.client_read(b"k", level, node=node)  # type: ignore[attr-defined]
+    +    except UnsupportedLevelError:
+    +        return ReadObservation("unsupported", None)
+    +    except RuntimeError:
+    +        return ReadObservation("blocked", None)
+    +    return ReadObservation("fresh" if result.value == b"v" else "stale", result.value)
+    +
+    +
+    +def run_experiment(*, verbose: bool = True) -> dict[str, dict[str, ReadObservation]]:
+    +    matrix: dict[str, dict[str, ReadObservation]] = {}
+    +
+    +    async_group = AsyncPrimaryGroup(replica_ids=("lagging",), replication_delay=2)
+    +    async_group.client_write(b"k", b"v", AckLevel.LEADER)
+    +    matrix["async"] = {
+    +        "LOCAL": _observe(async_group, ReadLevel.LOCAL, "lagging"),
+    +        "LEADER": _observe(async_group, ReadLevel.LEADER),
+    +        "LINEARIZABLE": _observe(async_group, ReadLevel.LINEARIZABLE),
+    +    }
+    +
+    +    wal_group = WalShippingGroup(standby_ids=("lagging",), replication_delay=2)
+    +    wal_group.client_write(b"k", b"v", AckLevel.LEADER)
+    +    matrix["wal"] = {
+    +        "LOCAL": _observe(wal_group, ReadLevel.LOCAL, "lagging"),
+    +        "LEADER": _observe(wal_group, ReadLevel.LEADER),
+    +        "LINEARIZABLE": _observe(wal_group, ReadLevel.LINEARIZABLE),
+    +    }
+    +
+    +    isr_group = IsrGroup(replication_delay=2)
+    +    follower = next(node for node in isr_group.probe().nodes if node != isr_group.probe().leader)
+    +    isr_group.client_write(b"k", b"v", AckLevel.LEADER)
+    +    matrix["isr"] = {
+    +        "LOCAL": _observe(isr_group, ReadLevel.LOCAL, follower),
+    +        "LEADER": _observe(isr_group, ReadLevel.LEADER),
+    +        "LINEARIZABLE": _observe(isr_group, ReadLevel.LINEARIZABLE),
+    +    }
+    +
+    +    raft_group = RaftGroup(
+    +        seed=606,
+    +        election_timeout_range=(4, 7),
+    +        heartbeat_interval=1,
+    +    )
+    +    raft_group.run_until_leader()
+    +    follower = next(node for node in raft_group.probe().nodes if node != raft_group.probe().leader)
+    +    raft_group.isolate(follower)
+    +    raft_group.client_write(b"k", b"v", AckLevel.QUORUM)
+    +    matrix["raft"] = {
+    +        "LOCAL": _observe(raft_group, ReadLevel.LOCAL, follower),
+    +        "LEADER": _observe(raft_group, ReadLevel.LEADER),
+    +        "LINEARIZABLE": _observe(raft_group, ReadLevel.LINEARIZABLE),
+    +    }
+    +
+    +    if verbose:
+    +        print("实验 6：ReadLevel × 协议")
+    +        for protocol, row in matrix.items():
+    +            summary = ", ".join(f"{level}={result.status}" for level, result in row.items())
+    +            print(f"{protocol}: {summary}")
+    +    return matrix
+    +
+    +
+    +if __name__ == "__main__":
+    +    run_experiment()
+    ```
+
+**What it is and why it appears**
+
+Experiment 6 places one follower behind and evaluates LOCAL, LEADER, and LINEARIZABLE reads across every protocol.
+
+**Runtime role**
+
+`_observe` turns a returned value, `UnsupportedLevelError`, or authority `RuntimeError` into distinct statuses without erasing the cause.
+
+**Key code**
+
+```python
+except UnsupportedLevelError:
+    return ReadObservation("unsupported", None)
+except RuntimeError:
+    return ReadObservation("blocked", None)
+```
+
+**Statement understanding**
+
+Unsupported means the mechanism does not provide that guarantee; blocked means the guarantee exists but current authority evidence is unavailable.
+
+??? note "File diff: labs/exp07_split_brain_lease.py"
+    ```diff
+    diff --git a/labs/exp07_split_brain_lease.py b/labs/exp07_split_brain_lease.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..457858b4022c2fa2622d26362e9e4455b9c64268
+    --- /dev/null
+    +++ b/labs/exp07_split_brain_lease.py
+    @@ -0,0 +1,99 @@
+    +"""Experiment 7: stale old-leader reads versus authority guards."""
+    +
+    +import argparse
+    +from dataclasses import dataclass
+    +
+    +from minidist.protocols import AckLevel, ReadLevel
+    +from minidist.protocols.async_primary import AsyncPrimaryGroup
+    +from minidist.protocols.isr import IsrGroup
+    +from minidist.protocols.raft import RaftGroup
+    +from minidist.protocols.wal_shipping import WalShippingGroup
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class ExperimentResult:
+    +    protocol: str
+    +    old_side_local_value: bytes | None
+    +    current_value: bytes | None
+    +    guard: str
+    +
+    +
+    +def run_experiment(*, protocol: str = "isr", verbose: bool = True) -> ExperimentResult:
+    +    if protocol == "async":
+    +        group = AsyncPrimaryGroup(replica_ids=("r1", "r2"))
+    +        group.client_write(b"state", b"before", AckLevel.LEADER)
+    +        group.run_until_idle()
+    +        old = group.primary
+    +        group.isolate(old)
+    +        group.promote("r1")
+    +        group.client_write(b"state", b"after", AckLevel.LEADER)
+    +        group.run_until_idle()
+    +        old_value = group.client_read(b"state", ReadLevel.LOCAL, node=old).value
+    +        current = group.client_read(b"state", ReadLevel.LEADER).value
+    +        guard = "unsupported"
+    +    elif protocol == "wal":
+    +        group = WalShippingGroup(standby_ids=("s1", "s2"))
+    +        group.client_write(b"state", b"before", AckLevel.LEADER)
+    +        group.run_until_idle()
+    +        old = group.primary
+    +        group.isolate(old)
+    +        group.promote("s1")
+    +        group.client_write(b"state", b"after", AckLevel.LEADER)
+    +        group.run_until_idle()
+    +        old_value = group.client_read(b"state", ReadLevel.LOCAL, node=old).value
+    +        current = group.client_read(b"state", ReadLevel.LEADER).value
+    +        guard = "unsupported"
+    +    elif protocol == "isr":
+    +        group = IsrGroup()
+    +        group.client_write(b"state", b"before", AckLevel.ALL_ISR)
+    +        old = group.leader
+    +        group.isolate(old)
+    +        new = next(node for node in group.probe().isr if node != old)
+    +        group.controller_elect(new)
+    +        group.client_write(b"state", b"after", AckLevel.ALL_ISR)
+    +        old_value = group.client_read(b"state", ReadLevel.LOCAL, node=old).value
+    +        current = group.client_read(b"state", ReadLevel.LINEARIZABLE).value
+    +        try:
+    +            group.lease_read(old, b"state")
+    +        except RuntimeError:
+    +            guard = "lease fenced"
+    +        else:
+    +            guard = "lease failed open"
+    +    elif protocol == "raft":
+    +        group = RaftGroup(
+    +            seed=707,
+    +            election_timeout_range=(4, 7),
+    +            heartbeat_interval=1,
+    +        )
+    +        old = group.run_until_leader()
+    +        group.client_write(b"state", b"before", AckLevel.QUORUM)
+    +        group.run_until_converged()
+    +        group.isolate(old)
+    +        group.run_until_leader(exclude=old)
+    +        group.client_write(b"state", b"after", AckLevel.QUORUM)
+    +        old_value = group.client_read(b"state", ReadLevel.LOCAL, node=old).value
+    +        current = group.client_read(b"state", ReadLevel.LINEARIZABLE).value
+    +        guard = "read-index fenced"
+    +    else:
+    +        raise ValueError("protocol must be async, wal, isr, or raft")
+    +
+    +    result = ExperimentResult(protocol, old_value, current, guard)
+    +    if verbose:
+    +        print(
+    +            f"实验 7 [{protocol}]：old_LOCAL={old_value!r}; "
+    +            f"current={current!r}; authority_guard={guard}"
+    +        )
+    +    return result
+    +
+    +
+    +if __name__ == "__main__":
+    +    parser = argparse.ArgumentParser()
+    +    parser.add_argument(
+    +        "--protocol",
+    +        choices=("async", "wal", "isr", "raft", "all"),
+    +        default="all",
+    +    )
+    +    args = parser.parse_args()
+    +    selected = ("async", "wal", "isr", "raft") if args.protocol == "all" else (args.protocol,)
+    +    for name in selected:
+    +        run_experiment(protocol=name)
+    ```
+
+**What it is and why it appears**
+
+Experiment 7 proves an isolated old side may still expose its prior local value while only the current side can satisfy an authority-guarded read.
+
+**Runtime role**
+
+It creates shared state, partitions the old authority, changes authority, writes a new value, then records old-local, current, and guard results.
+
+**Key code**
+
+```python
+old_value = group.client_read(b"state", ReadLevel.LOCAL, node=old).value
+current = group.client_read(b"state", ReadLevel.LINEARIZABLE).value
+```
+
+**Statement understanding**
+
+Observability is not authority. Returning an old local value is allowed; presenting it through the guarded current read would be the safety violation.
+
+### Verification evidence
+
+Run `uv run pytest -q $(cat journey/stages/10-advanced-experiments/tests.txt)`. The five new contracts complete the seven-experiment, four-protocol evidence matrix.
+
+### Durable takeaways
+
+Membership, retention, read location, and authority proof are independent axes. Preserve `unsupported`, `blocked`, `stale`, and `fresh` as different outcomes.
+
+### Explain it in your own words
+
+Choose one row of the final matrix and predict all four protocol results from their mechanisms, including why a stale local read is not itself a safety failure.
+
+### Textbook
+
+[Chapter 8](https://github.com/system-in-miniature/mini-dist/blob/main/docs/tutorial/08-experiments.md)
+
+[Compare this stage on GitHub](https://github.com/system-in-miniature/mini-dist/compare/stage-09...stage-10)
+
+After finishing, use `git checkout stage-10` to compare your result.
+
+[Complete reference patch / 完整参考补丁](https://github.com/system-in-miniature/mini-dist/blob/main/journey/stages/10-advanced-experiments/stage.patch)

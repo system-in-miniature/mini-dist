@@ -28,6 +28,14 @@ Kafka 用同步副本集合（in-sync replicas, ISR）+ 高水位（high waterma
 具有四列证据矩阵；FailureInjector 也提供显式“已 ack 但未 fsync”断电丢失
 窗口。两个新协议均有同 seed Trace 回放测试。
 
+## 学习模式
+
+- **机制教程**——按概念与机制阅读协议谱系，入口见[双语教材](docs/zh/index.md)。
+- **自主重建**——通过十个可独立浏览的 Stage 重建项目，每节包含测试证据与按机制
+  分组的 Diff，入口见[重建旅程](docs/zh/journey/index.md)。
+- **Agent 带教**——让 Codex 在终端中互动讲解、实现并验收一个 Stage，使用方式见
+  [CLI 教程](docs/zh/agent-guided.md)。
+
 ## 快速开始
 
 要求 Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)。
