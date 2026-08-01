@@ -1,31 +1,7 @@
 name: Polished Journey
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "journey/**"
-      - "docs/**"
-      - "src/**"
-      - "tests/**"
-      - "AGENTS.md"
-      - "README*.md"
-      - "mkdocs.yml"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/journey.yml"
-  pull_request:
-    paths:
-      - "journey/**"
-      - "docs/**"
-      - "src/**"
-      - "tests/**"
-      - "AGENTS.md"
-      - "README*.md"
-      - "mkdocs.yml"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/journey.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -53,4 +29,3 @@ jobs:
         run: uv run python -m journey.tools.build_journey --check
       - name: Build documentation strictly
         run: uv run --with mkdocs-material==9.7.7 mkdocs build --strict
-
